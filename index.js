@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, appendFileSync, statSync, writeFileSync, readFil
 import { join } from 'node:path'
 import {
   DEFAULT_ROOT, KINDS, TIERS, STATUSES, resolveRoot, ensureRoot, writeEntry,
-  searchEntries, relatedEntries, findEntry, rebuildIndex, stats, listEntries,
+  rememberRoot, searchEntries, relatedEntries, findEntry, rebuildIndex, stats, listEntries,
 } from './lib/kb.mjs'
 
 export const name = 'feiyu-kb'
@@ -58,11 +58,14 @@ const safe = (v) => {
 export function apply(ctx, config) {
   let root
   try {
-    root = resolveRoot(config?.root || process.env.FEIYU_KB_ROOT || DEFAULT_ROOT)
+    root = resolveRoot(config?.root)
     ensureRoot(root)
+    // ⭐ 把自己的生效路径记下来：命令行（kb-cli）看不到 profile 配置，
+    //    只有靠这个备忘文件才跟插件对齐，否则 CLI 兜底会写进另一个库（知识被劈成两半）。
+    rememberRoot(root)
   } catch (e) {
     // 连目录都建不出来：不能因此让整条插件不激活，工具里再报错
-    root = resolveRoot(DEFAULT_ROOT)
+    root = resolveRoot()
     console?.warn?.(`[feiyu-kb] 建知识库目录失败：${e?.message ?? e}`)
   }
 

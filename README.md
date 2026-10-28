@@ -124,15 +124,23 @@ node lib/kb-cli.mjs index
 
 低于阈值（默认 3 分）不返回 —— **宁可空着，也不硬凑「相关」**。每条结果都带 `why`，方便判断真伪。
 
-## 配置
+## 配置：库放在哪个文件夹
 
-库位置优先级：
+优先级从高到低：
 
-1. bundle patch 里的 `config.root`（profile 层可改）；
-2. 环境变量 `FEIYU_KB_ROOT`；
-3. 默认 `~/dsh-feiyu-kb`。
+1. **bundle patch 里的 `config.root`** —— profile 层可改（`<DSH_HOME>/profiles/<p>/cordis.patch.yml` 里 `- id: feiyu-kb` 那段，或改本包自带的 `cordis.patch.yml`）；
+2. **环境变量 `FEIYU_KB_ROOT`**；
+3. **插件记下的生效路径** `$DSH_HOME/feiyu-kb.root`（插件每次加载会把自己实际用的路径写进去）；
+4. **默认 `~/dsh-feiyu-kb`**（Windows 上就是 `C:\Users\<你>\dsh-feiyu-kb`）。
 
-换库 = 改这三处之一，然后重启（或等 profile 的 patch 层热重载）。
+第 3 条是为了让**命令行和插件用同一个库**：`kb-cli.mjs` 看不到 profile 配置，只能靠这个备忘文件对齐。不然配置里换过库位置的人，一用 CLI 兜底就会写进第二个库，知识被劈成两半。
+
+怎么确认当前用的是哪个库：
+
+```bash
+node lib/kb-cli.mjs where     # 命令行视角
+# 或在 DSH 里调 kb_status，返回的 root 就是插件视角
+```
 
 ## 和「刷B站」联动（可选）
 
