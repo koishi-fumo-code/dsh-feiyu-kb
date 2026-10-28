@@ -121,7 +121,8 @@ export function apply(ctx, config) {
     parameters: {},
     async execute() {
       const s = stats(root)
-      return { ok: true, ...s, kinds: KINDS, tiers: TIERS }
+      // 精简返回：标签榜 12 条压到 6 条、最近 5 条压到 3 条（这个调用一次能省 ~150 token）
+      return { ok: true, ...s, topTags: (s.topTags || []).slice(0, 6), latest: (s.latest || []).slice(0, 3), kinds: KINDS, tiers: TIERS }
     },
   })
 
@@ -156,6 +157,7 @@ export function apply(ctx, config) {
       id: { type: 'string', description: '条目 id' },
       bvid: { type: 'string', description: 'BV号' },
       path: { type: 'string', description: '相对路径' },
+      full: { type: 'boolean', description: '返回完整正文（默认截到 8000 字）' },
     },
     async execute(args) {
       const p = String(args.path || '').trim()
@@ -164,7 +166,11 @@ export function apply(ctx, config) {
       }
       try {
         const e = findEntry(root, { id: args.id, bvid: args.bvid, path: p })
-        return { ok: true, meta: e.meta, body: e.body, text: e.text.length > 24000 ? e.text.slice(0, 24000) + '\n…（截断）' : e.text }
+        // ⭐ 默认截到 8000 字（≈2.5k token）：读一条笔记不该吃掉半个上下文窗口。
+        //    确实要全文再传 full: true（上限 60k 字）。
+        const cap = args.full ? 60000 : 8000
+        const text = e.text.length > cap ? e.text.slice(0, cap) + `\n…（已截断，原 ${e.text.length} 字；要全文传 full: true）` : e.text
+        return { ok: true, meta: e.meta, body: cap >= 60000 ? e.body : undefined, text, truncated: e.text.length > cap }
       } catch (err) {
         return { ok: false, error: String(err?.message ?? err) }
       }
