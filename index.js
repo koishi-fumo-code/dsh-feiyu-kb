@@ -466,7 +466,7 @@ export function apply(ctx, config) {
       },
     })
     ctx.effect(() => () => wd.stop(), 'feiyu-kb: 异常看门狗')
-    log('异常看门狗已启动（启动 + 每 5 分钟查崩溃日志）')
+    log('异常看门狗已启动（启动 + 每 10 分钟查崩溃日志）')
   } catch (e) {
     log(`看门狗没起来：${e?.message ?? e}`)
   }
