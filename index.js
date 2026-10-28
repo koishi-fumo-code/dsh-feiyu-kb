@@ -117,8 +117,7 @@ export function apply(ctx, config) {
   /* ─────────────── kb_status ─────────────── */
   tool({
     name: 'kb_status',
-    description: '看一眼「大肥鱼知识库」的状态：一共多少条、按类型/档位怎么分、最近收了哪几条、标签排行。'
-      + '不确定库里有没有相关材料时，先调它。',
+    description: '库概况：条数、类型/档位分布、最近几条、标签排行。',
     parameters: {},
     async execute() {
       const s = stats(root)
@@ -129,15 +128,13 @@ export function apply(ctx, config) {
   /* ─────────────── kb_search ─────────────── */
   tool({
     name: 'kb_search',
-    description: '搜「大肥鱼知识库」（视频笔记 / 技术要点）。多个词用空格隔开、**每个词都要命中**（AND）。\n'
-      + '不给 query 就是「列最近收录的」。返回 id / 标题 / UP / 标签 / 档位 / 命中片段 / 相对路径；'
-      + '要看全文再用 kb_read。',
+    description: '搜知识库：标题/UP/标签/正文，空格分隔多词（全部命中）。留空=列最近。看全文用 kb_read。',
     parameters: {
-      query: { type: 'string', description: '关键词，空格分隔（例：`DeepSeek 推理`）；留空 = 列最近' },
-      tags: { type: 'string', description: '按标签过滤，逗号分隔（例：`KVCache,推理`）' },
-      kind: { type: 'string', description: `只收某一类：${KINDS.join(' / ')}` },
-      tier: { type: 'string', description: `只收某一档：${TIERS.join(' / ')}` },
-      limit: { type: 'number', description: '返回几条（默认 8，最多 50）' },
+      query: { type: 'string', description: '关键词，空格分隔；留空列最近' },
+      tags: { type: 'string', description: '标签过滤，逗号分隔' },
+      kind: { type: 'string', description: '知识|有意思' },
+      tier: { type: 'string', description: '值得看|可以看|不值当' },
+      limit: { type: 'number', description: '条数，默认 8' },
     },
     async execute(args) {
       const r = searchEntries(root, {
@@ -154,11 +151,11 @@ export function apply(ctx, config) {
   /* ─────────────── kb_read ─────────────── */
   tool({
     name: 'kb_read',
-    description: '读知识库里某一篇的全文（Markdown）。用 id、BV号 或相对路径指定 —— 三个给一个就行。',
+    description: '读一条笔记全文。id / bvid / path 给一个即可。',
     parameters: {
-      id: { type: 'string', description: '条目 id（形如 2026-10-27-BV1Mxn26eEh5）' },
-      bvid: { type: 'string', description: 'BV号（例：BV1Mxn26eEh5）' },
-      path: { type: 'string', description: '相对知识库根目录的路径（kb_search 返回的 path）' },
+      id: { type: 'string', description: '条目 id' },
+      bvid: { type: 'string', description: 'BV号' },
+      path: { type: 'string', description: '相对路径' },
     },
     async execute(args) {
       const p = String(args.path || '').trim()
@@ -175,26 +172,26 @@ export function apply(ctx, config) {
   })
 
   /* ─────────────── kb_add ─────────────── */
+  // ⚠️ 描述从 1050 字符压到 ~300：工具定义是**每轮请求都带上**的固定 token 开销（2026-10-28 实测
+  //    8 只工具共 4547 字符 ≈ 1.5k~2.1k token）。功能不变，只把话说短。
   tool({
     name: 'kb_add',
-    description: '往「大肥鱼知识库」里新增/更新一篇笔记。**刷B站每轮把「有用的」视频都该调它归档一次**。\n'
-      + '判重键是 BV号（同一个 BV 再写就是更新，不会多出一条）；没有 BV 号时用日期+标题。\n'
-      + '⚠️ 要点必须是**真读到的**（字幕 / 热评 / 简介），读不到就只写一句话，别编。',
+    description: '新增/更新一条笔记。按 BV号 → URL → 日期+标题 判重（再次写是同一条的更新）。要点必须是原文里读到的，别编。',
     parameters: {
       title: { type: 'string', description: '标题（必填）' },
-      bvid: { type: 'string', description: 'BV号（判重用）' },
-      url: { type: 'string', description: '链接（不给就用 BV号 拼）' },
-      up: { type: 'string', description: 'UP 主' },
-      date: { type: 'string', description: '视频日期 YYYY-MM-DD（默认今天）' },
-      kind: { type: 'string', description: `类型：${KINDS.join(' / ')}（默认 知识）` },
-      tier: { type: 'string', description: `档位：${TIERS.join(' / ')}` },
-      status: { type: 'string', description: `状态：${STATUSES.join(' / ')}（默认 待看）` },
-      tags: { type: 'string', description: '标签，逗号分隔（3~6 个最好用）' },
-      summary: { type: 'string', description: '一句话：这条到底讲了什么' },
-      points: { type: 'string', description: '要点，一行一条（会写成 - 列表）' },
-      excerpt: { type: 'string', description: '原文摘录（字幕里最关键的几句）' },
-      notes: { type: 'string', description: '备注 / 以后怎么用得上' },
-      source: { type: 'string', description: '来源（默认 bili-scroll）' },
+      bvid: { type: 'string', description: 'BV号' },
+      url: { type: 'string', description: '链接' },
+      up: { type: 'string', description: 'UP主' },
+      date: { type: 'string', description: 'YYYY-MM-DD，默认今天' },
+      kind: { type: 'string', description: '知识|有意思' },
+      tier: { type: 'string', description: '值得看|可以看|不值当' },
+      status: { type: 'string', description: '待看|已看|略过' },
+      tags: { type: 'string', description: '逗号分隔，3~6 个' },
+      summary: { type: 'string', description: '一句话' },
+      points: { type: 'string', description: '要点，一行一条' },
+      excerpt: { type: 'string', description: '原文摘录' },
+      notes: { type: 'string', description: '备注' },
+      source: { type: 'string', description: '来源' },
     },
     async execute(args) {
       try {
@@ -212,14 +209,12 @@ export function apply(ctx, config) {
   /* ─────────────── kb_related ─────────────── */
   tool({
     name: 'kb_related',
-    description: '找知识库里跟这条**相关**的旧条目（标签加权 + 中文二字组相似度 + 英文/型号词，纯本地、毫秒级）。\n'
-      + '刷完一轮写报告时用它：给每条视频配一句「库里有相关的」，让三个月前那条同主题的笔记重新浮上来。\n'
-      + '⚠️ 用**你打算给这条的标签**去比最准；`exclude` 传正在归档的 BV 号，别让它跟自己匹配。',
+    description: '找同主题的旧笔记（标签+关键词+文字相似度，纯本地）。用你打算给它打的标签比最准；exclude 传当前 BV号。',
     parameters: {
-      text: { type: 'string', description: '这条视频的标题 / 摘要 / 要点，粘一段就行' },
-      tags: { type: 'string', description: '标签，逗号分隔（用你准备给这条打的标签）' },
-      exclude: { type: 'string', description: '排除这个 BV 号 / id（通常就是正在归档的这条）' },
-      limit: { type: 'number', description: '最多几条（默认 3，最多 10）' },
+      text: { type: 'string', description: '标题/摘要/要点' },
+      tags: { type: 'string', description: '标签，逗号分隔' },
+      exclude: { type: 'string', description: '排除的 BV号 / id' },
+      limit: { type: 'number', description: '条数，默认 3' },
     },
     async execute(args) {
       try {
@@ -239,25 +234,20 @@ export function apply(ctx, config) {
   /* ─────────────── kb_ingest：其它进料通道 ─────────────── */
   tool({
     name: 'kb_ingest',
-    description: '把**外部东西**收进知识库 —— 不依赖刷B站插件：\n'
-      + '- `from=url`：抓一个网页，抽标题 / 正文 / 要点（只 http/https，不抓内网）\n'
-      + '- `from=file`：导入一个本地文本文件（md / txt / json / 代码…）\n'
-      + '- `from=dir`：批量导入一个目录里的文本文件（一篇一个条目）\n'
-      + '- `from=feed`：RSS / Atom 订阅，每条收一条（默认 status=待看）\n'
-      + '⚠️ 要点是**从正文里如实摘的**（标题行 / 列表 / 句子），不是模型总结；抽不出来就只留一句话。\n'
-      + '⚠️ 同一个 url / BV 号再收一次是「更新」，不会多出一条。',
+    description: '收外部内容进知识库：from=url 抓网页 / file 导文件 / dir 批量导目录 / feed 收 RSS·Atom。'
+      + '要点如实摘取、不是总结；同一 url 再收是更新。只支持 http/https，不抓内网。',
     parameters: {
-      from: { type: 'string', description: 'url | file | dir | feed' },
-      url: { type: 'string', description: 'from=url 或 from=feed 时的地址' },
-      path: { type: 'string', description: 'from=file 时的文件绝对/相对路径' },
-      dir: { type: 'string', description: 'from=dir 时的目录' },
-      ext: { type: 'string', description: 'from=dir 只收这个扩展名（例：.md）' },
-      limit: { type: 'number', description: 'dir 最多几个文件 / feed 最多几条（默认 10~20）' },
-      tags: { type: 'string', description: '标签，逗号分隔' },
-      kind: { type: 'string', description: `类型：${KINDS.join(' / ')}` },
-      tier: { type: 'string', description: `档位：${TIERS.join(' / ')}` },
-      summary: { type: 'string', description: '（可选）自己写一句话，覆盖自动抽取的' },
-      notes: { type: 'string', description: '(可选) 备注' },
+      from: { type: 'string', description: 'url|file|dir|feed' },
+      url: { type: 'string', description: 'url/feed 的地址' },
+      path: { type: 'string', description: 'file 的路径' },
+      dir: { type: 'string', description: 'dir 的目录' },
+      ext: { type: 'string', description: 'dir 只收该扩展名，如 .md' },
+      limit: { type: 'number', description: 'dir/feed 最多几条' },
+      tags: { type: 'string', description: '逗号分隔' },
+      kind: { type: 'string', description: '知识|有意思' },
+      tier: { type: 'string', description: '值得看|可以看|不值当' },
+      summary: { type: 'string', description: '覆盖自动摘要' },
+      notes: { type: 'string', description: '备注' },
     },
     async execute(args) {
       if (!cfg.tools.ingest) return { ok: false, error: 'kb_ingest 已在设置里关掉（设置 → 知识库 → 工具开关）' }
@@ -293,16 +283,12 @@ export function apply(ctx, config) {
   /* ─────────────── kb_capture：随手记 ─────────────── */
   tool({
     name: 'kb_capture',
-    description: '随手记：把一段文本（聊天里的、书上的、脑子里的）直接存成条目 —— 自动起标题、抽要点、标 `via: note`。\n'
-      + '比 kb_add 轻：不用想 id / url / 档位，只要给 text。',
+    description: '随手记一段文本，自动起标题、抽要点（标 via: note）。比 kb_add 轻，只要给 text。',
     parameters: {
       text: { type: 'string', description: '要存的内容（必填）' },
-      title: { type: 'string', description: '标题（不给就用第一句）' },
+      title: { type: 'string', description: '标题，默认取第一句' },
       tags: { type: 'string', description: '标签，逗号分隔' },
-      kind: { type: 'string', description: `类型：${KINDS.join(' / ')}` },
-      tier: { type: 'string', description: `档位：${TIERS.join(' / ')}` },
-      notes: { type: 'string', description: '备注' },
-      source: { type: 'string', description: '来源（默认 chat；例：book / podcast / 会议）' },
+      source: { type: 'string', description: '来源，默认 chat' },
     },
     async execute(args) {
       if (!cfg.tools.capture) return { ok: false, error: 'kb_capture 已在设置里关掉（设置 → 知识库 → 工具开关）' }
@@ -311,9 +297,8 @@ export function apply(ctx, config) {
           title: args.title ? String(args.title) : '',
           text: String(args.text || ''),
           tags: String(args.tags || ''),
-          kind: String(args.kind || '知识'),
-          tier: String(args.tier || '可以看'),
-          notes: String(args.notes || ''),
+          kind: '知识',
+          tier: '可以看',
           source: String(args.source || 'chat'),
         })
         afterWriteIndex(root)
@@ -329,7 +314,7 @@ export function apply(ctx, config) {
   /* ─────────────── kb_index ─────────────── */
   tool({
     name: 'kb_index',
-    description: '重建知识库索引（INDEX.md / index.jsonl / .kb/meta.json）。手改过 entries 之后调一次。',
+    description: '重建索引（手改过 entries 后调用）。',
     parameters: {},
     async execute() {
       try {
