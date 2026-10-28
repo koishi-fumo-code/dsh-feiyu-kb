@@ -1,0 +1,45 @@
+{
+  "name": "dsh-feiyu-kb",
+  "version": "0.1.0",
+  "description": "DSH 插件：把本地 Markdown 知识库暴露成 kb_search / kb_read / kb_add / kb_related / kb_index / kb_status —— 任何模型运行时都能用",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "knowledge-base",
+    "markdown",
+    "bilibili",
+    "notes"
+  ],
+  "engines": {
+    "dsh": ">=0.1.7-rc.1",
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koishi-fumo-code/dsh-feiyu-kb.git"
+  },
+  "homepage": "https://github.com/koishi-fumo-code/dsh-feiyu-kb#readme",
+  "bugs": {
+    "url": "https://github.com/koishi-fumo-code/dsh-feiyu-kb/issues"
+  },
+  "author": "koishi-fumo-code",
+  "license": "MIT"
+}

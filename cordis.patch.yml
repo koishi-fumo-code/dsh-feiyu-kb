@@ -1,0 +1,21 @@
+# ============================================================================
+# dsh-feiyu-kb —— 插件自带的挂载声明（bundle patch）
+# ============================================================================
+# 这个文件是**包的一部分**：装进 profile 的 `dsh.profile.bundles` 后，启动时按
+#   「bundle 顺序 → profile 自己的 cordis.patch.yml → --patch」
+# 叠进插件树。
+#
+# ⭐ 入口（insert）和配置（root）都写在这里，是为了**卸载干净**：
+#   插件管理器卸载时只清「它自己写的行」和「包自带 patch 里的行」，
+#   **绝不改写用户的 cordis.patch.yml**（那里只要还有一条 insert 引用本包，
+#   卸载会直接 409 拒绝）。⇒ 所以别把这段抄进 profile 的 patch 里。
+#
+# 换知识库位置：改下面 config.root，或者设环境变量 FEIYU_KB_ROOT。
+# 装/卸：node scripts/install.mjs / node scripts/uninstall.mjs
+# ============================================================================
+
+- insert:
+    - id: feiyu-kb
+      name: dsh-feiyu-kb
+      config:
+        root: 'D:/dsh工作区/大肥鱼知识库'
