@@ -54,6 +54,13 @@ gh release create vX.Y.Z ... dsh-feiyu-kb-X.Y.Z.tgz
 ls "$env:APPDATA\@deepseek-ai\dsh-desktop\logs\crash-*.log" | sort LastWriteTime -desc | select -first 3
 ```
 
+**先看有没有自动体检报告**（看门狗会在下次启动时写，比手动翻日志快）：
+
+```bash
+ls ~/.dsh/diagnostics/          # 最新一份就是
+node scripts/doctor.mjs         # 或者立刻再体检一次
+```
+
 读 `phase: startup` + 第一条 `--- error ---`。启动期错误基本都在第 2 节那张表里。
 恢复顺序：**修插件 → 恢复 profile 的 `bundles` → 恢复 `cordis.patch.yml`**（回滚常会把 `ui-settings` 关成 `enabled: false`，设置页会打不开）。
 

@@ -19,7 +19,9 @@
  * ============================================================================
  */
 import { existsSync, mkdirSync, appendFileSync, statSync, writeFileSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+const PKG_DIR = dirname(fileURLToPath(import.meta.url))
 import {
   DEFAULT_ROOT, KINDS, TIERS, STATUSES, resolveRoot, ensureRoot, writeEntry,
   rememberRoot, searchEntries, relatedEntries, findEntry, rebuildIndex, afterWriteIndex, stats, listEntries,
@@ -27,6 +29,7 @@ import {
 
 import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
 import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS } from './lib/config.mjs'
+import { startWatchdog, runDiagnosis, lastWatchdogState } from './lib/watchdog.mjs'
 
 export const name = 'feiyu-kb'
 // ⚠️ 只 inject tools：webServer 在 headless profile 里可能没有，
@@ -354,6 +357,12 @@ export function apply(ctx, config) {
     } catch { return false }
   }
 
+  /** 要体检的 profile 目录（headless 里跑的时候名字不一样，用环境变量兜底） */
+  const profileDirs = () => {
+    const dshHome = process.env.DSH_HOME || join(process.env.USERPROFILE || '', '.dsh')
+    return [join(dshHome, 'profiles', process.env.DSH_PROFILE || 'desktop')]
+  }
+
   const sendJson = (res, code, obj) => {
     try {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -368,8 +377,7 @@ export function apply(ctx, config) {
     req.on('error', () => resolve({}))
   })
 
-  const statusView = () => {
-    const s = stats(root)
+  const statusView = () => {    const s = stats(root)
     return {
       ok: true, root, configPath: configPath(), tools: cfg.tools, defaults: DEFAULT_TOOLS,
       entries: s.entries, byKind: s.byKind, byTier: s.byTier, latest: s.latest, topTags: s.topTags,
@@ -414,6 +422,17 @@ export function apply(ctx, config) {
               log('设置页：重建索引')
               return sendJson(res, 200, { ok: true, ...meta, indexPath: join(root, 'INDEX.md') })
             }
+            // 体检：看上次报告 / 立刻跑一次
+            if (req.method === 'GET' && path === '/api/feiyu-kb/diagnostics') {
+              const st = lastWatchdogState()
+              let report = ''
+              try { if (st.lastReport) report = readFileSync(st.lastReport, 'utf8').slice(0, 20000) } catch { /* 没报告就算了 */ }
+              return sendJson(res, 200, { ok: true, ...st, report })
+            }
+            if (req.method === 'POST' && path === '/api/feiyu-kb/diagnose') {
+              const r = runDiagnosis({ reason: '手动体检（设置页）', log, kbRoot: root, profileDirs: profileDirs() })
+              return sendJson(res, 200, { ok: true, file: r.file, findings: r.findings, report: r.report })
+            }
             return sendJson(res, 404, { ok: false, error: `没有这个接口：${req.method} ${path}` })
           } catch (e) {
             return sendJson(res, 500, { ok: false, error: String(e?.message ?? e) })
@@ -439,6 +458,26 @@ export function apply(ctx, config) {
     }
   } else {
     mountRoutes(typeof ctx.get === 'function' ? ctx.get('webServer') : undefined, ctx)
+  }
+
+  /* ─────────────── 异常自动体检（看门狗） ─────────────── */
+  // 2026-10-28 使用者要求：DSH 一出现异常就自动跑体检。
+  // 启动 3 秒后先查一遍崩溃日志（补报"上次起不来"），之后每 5 分钟扫一次新崩溃 / profile 被回滚。
+  try {
+    const wd = startWatchdog({
+      log,
+      getRoot: () => root,
+      profileDirs: profileDirs(),
+      pkgDir: PKG_DIR,
+      onDiagnosis: (r) => {
+        const bad = r.findings.filter((f) => f.level !== 'ok').map((f) => f.title)
+        log(`⚠️ 体检发现问题：${bad.join('；')} —— 报告：${r.file}`)
+      },
+    })
+    ctx.effect(() => () => wd.stop(), 'feiyu-kb: 异常看门狗')
+    log('异常看门狗已启动（启动 + 每 5 分钟查崩溃日志）')
+  } catch (e) {
+    log(`看门狗没起来：${e?.message ?? e}`)
   }
 }
 

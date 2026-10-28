@@ -72,6 +72,7 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = useState('')
       const [tone, setTone] = useState('')
       const [err, setErr] = useState('')
+      const [diag, setDiag] = useState(null)
 
       const load = useCallback(async () => {
         try {
@@ -80,6 +81,7 @@ window.__ModuleLoader__.load({
           setRoot((prev) => (prev === '' ? (s.root || '') : prev))
           setErr('')
         } catch (e) { setErr(String(e.message || e)) }
+        try { setDiag(await jget('/diagnostics')) } catch { /* 没有体检记录也正常 */ }
       }, [])
 
       useEffect(() => { load() }, [load])
@@ -112,6 +114,16 @@ window.__ModuleLoader__.load({
           say(`索引已重建（${r.entries} 条）`, 'good')
           await load()
         } catch (e) { say('重建失败：' + e.message, 'warn') } finally { setBusy('') }
+      }
+
+      const runDiag = async () => {
+        setBusy('diag')
+        try {
+          const r = await jpost('/diagnose')
+          setDiag({ lastRun: new Date().toISOString(), lastReport: r.file, report: r.report, seenCrashes: diag?.seenCrashes || 0 })
+          const bad = (r.findings || []).filter((f) => f.level !== 'ok')
+          say(bad.length ? `体检完成，发现 ${bad.length} 项问题（见下方报告）` : '体检完成，没发现问题', bad.length ? 'warn' : 'good')
+        } catch (e) { say('体检失败：' + e.message, 'warn') } finally { setBusy('') }
       }
 
       if (err && !st) {
@@ -163,6 +175,20 @@ window.__ModuleLoader__.load({
               h('div', { 'data-fk-label': '' }, 'kb_capture —— 随手记一段'),
               h('div', { 'data-fk-note': '' }, '聊天里看到的一句话、书上抄的一段，直接存成一条笔记。'))),
           h('div', { 'data-fk-note': '' }, '关掉只是不开放那个工具，已有的笔记和别的工具都不受影响。')),
+
+        // ── 健康检查（DSH 异常时自动触发，也能手动跑）──
+        h('div', { 'data-fk-sec': '' },
+          h('div', { 'data-fk-h': '' }, '健康检查'),
+          h('div', { 'data-fk-row': '' },
+            h('button', { 'data-fk-btn': '', disabled: busy === 'diag', onClick: runDiag }, '立即体检'),
+            h('div', { 'data-fk-note': '' },
+              diag && diag.lastRun
+                ? `上次体检：${new Date(diag.lastRun).toLocaleString()}${diag.seenCrashes ? ` · 已记录 ${diag.seenCrashes} 次崩溃` : ''}`
+                : 'DSH 崩过之后会自动体检一次；也可以随时手动跑')),
+          h('div', { 'data-fk-note': '' }, '查崩溃日志、profile 有没有被回滚、插件包清单、知识库能不能读；报告写到 DSH 家目录的 diagnostics/'),
+          diag && diag.report
+            ? h('pre', { 'data-fk-kv': '', style: { maxHeight: '220px', overflow: 'auto', whiteSpace: 'pre-wrap' } }, diag.report)
+            : null),
 
         // ── 维护 ──
         h('div', { 'data-fk-sec': '' },
