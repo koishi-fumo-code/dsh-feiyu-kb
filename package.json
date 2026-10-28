@@ -16,7 +16,8 @@
     "scripts",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "AGENTS.md"
   ],
   "keywords": [
     "dsh",
@@ -52,5 +53,10 @@
     "url": "https://github.com/koishi-fumo-code/dsh-feiyu-kb/issues"
   },
   "author": "koishi-fumo-code",
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "preflight": "node scripts/preflight.mjs",
+    "test": "node scripts/selftest.mjs",
+    "bench": "node scripts/bench.mjs"
+  }
 }
