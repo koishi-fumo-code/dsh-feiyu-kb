@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, appendFileSync, statSync, writeFileSync, readFil
 import { join } from 'node:path'
 import {
   DEFAULT_ROOT, KINDS, TIERS, STATUSES, resolveRoot, ensureRoot, writeEntry,
-  rememberRoot, searchEntries, relatedEntries, findEntry, rebuildIndex, stats, listEntries,
+  rememberRoot, searchEntries, relatedEntries, findEntry, rebuildIndex, afterWriteIndex, stats, listEntries,
 } from './lib/kb.mjs'
 
 import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
@@ -196,9 +196,10 @@ export function apply(ctx, config) {
     async execute(args) {
       try {
         const r = writeEntry(root, args)
-        const meta = rebuildIndex(root)
+        afterWriteIndex(root)              // INDEX.md 一分钟最多重写一次；jsonl 已增量更新
+        const total = listEntries(root).length
         log(`kb_add ${r.action} ${r.id}`)
-        return { ok: true, ...r, total: meta.entries }
+        return { ok: true, ...r, total }
       } catch (err) {
         return { ok: false, error: String(err?.message ?? err) }
       }
@@ -312,9 +313,10 @@ export function apply(ctx, config) {
           notes: String(args.notes || ''),
           source: String(args.source || 'chat'),
         })
-        const meta = rebuildIndex(root)
+        afterWriteIndex(root)
+        const total = listEntries(root).length
         log(`kb_capture ${r.action} ${r.id}`)
-        return { ok: true, ...r, total: meta.entries }
+        return { ok: true, ...r, total }
       } catch (err) {
         return { ok: false, error: String(err?.message ?? err) }
       }
