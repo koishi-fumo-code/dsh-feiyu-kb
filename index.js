@@ -26,8 +26,11 @@ import {
 } from './lib/kb.mjs'
 
 import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
+import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS } from './lib/config.mjs'
 
 export const name = 'feiyu-kb'
+// ⚠️ 只 inject tools：webServer 在 headless profile 里可能没有，
+//    写成 inject 会让整条插件在那种环境**不激活**（工具全没了）。所以在 apply 里可选地取。
 export const inject = ['tools']
 
 /** 宿主那边 defineTool 的等价物（只做「裸属性表 → JSONSchema」+ additionalProperties 补全） */
@@ -58,25 +61,35 @@ const safe = (v) => {
 }
 
 export function apply(ctx, config) {
-  let root
-  try {
-    root = resolveRoot(config?.root)
+  let cfg = loadConfig()
+  let root = ''
+  const bundleRoot = config?.root
+
+  /** 重算生效库位置（设置页改 root 后立刻调用） */
+  const applyRoot = (raw) => {
+    root = resolveRoot(raw || cfg.root || bundleRoot)
     ensureRoot(root)
     // ⭐ 把自己的生效路径记下来：命令行（kb-cli）看不到 profile 配置，
     //    只有靠这个备忘文件才跟插件对齐，否则 CLI 兜底会写进另一个库（知识被劈成两半）。
     rememberRoot(root)
+    return root
+  }
+
+  try {
+    applyRoot()
   } catch (e) {
     // 连目录都建不出来：不能因此让整条插件不激活，工具里再报错
     root = resolveRoot()
     console?.warn?.(`[feiyu-kb] 建知识库目录失败：${e?.message ?? e}`)
   }
 
-  const logFile = join(root, '.kb', 'plugin.log')
+  const logFile = () => join(root, '.kb', 'plugin.log')
   const log = (msg) => {
     try {
-      if (existsSync(logFile) && statSync(logFile).size > 256 * 1024) writeFileSync(logFile, '', 'utf8')
+      const f = logFile()
+      if (existsSync(f) && statSync(f).size > 256 * 1024) writeFileSync(f, '', 'utf8')
       mkdirSync(join(root, '.kb'), { recursive: true })
-      appendFileSync(logFile, `${new Date().toISOString()}  ${msg}\n`, 'utf8')
+      appendFileSync(f, `${new Date().toISOString()}  ${msg}\n`, 'utf8')
     } catch { /* 日志写不进去不致命 */ }
   }
 
@@ -243,6 +256,7 @@ export function apply(ctx, config) {
       notes: { type: 'string', description: '(可选) 备注' },
     },
     async execute(args) {
+      if (!cfg.tools.ingest) return { ok: false, error: 'kb_ingest 已在设置里关掉（设置 → 知识库 → 工具开关）' }
       const from = String(args.from || '').trim().toLowerCase()
       const common = {
         tags: String(args.tags || ''), kind: String(args.kind || '知识'),
@@ -287,6 +301,7 @@ export function apply(ctx, config) {
       source: { type: 'string', description: '来源（默认 chat；例：book / podcast / 会议）' },
     },
     async execute(args) {
+      if (!cfg.tools.capture) return { ok: false, error: 'kb_capture 已在设置里关掉（设置 → 知识库 → 工具开关）' }
       try {
         const r = capture(root, {
           title: args.title ? String(args.title) : '',
@@ -320,6 +335,96 @@ export function apply(ctx, config) {
       }
     },
   })
+  /* ─────────────── 设置页用的 HTTP 接口（可选：没有 webServer 就跳过） ─────────────── */
+  /**
+   * 只接本机同源请求 —— 别的网页在浏览器里也能打到 127.0.0.1，
+   * 所以要比对 Host 是本机、Origin/Referer 与请求同源（抄 dsh-bili-scroll 的加固）。
+   */
+  const sameOriginOk = (req) => {
+    try {
+      const host = String(req.headers?.host || '')
+      if (!/^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(host)) return false
+      const site = req.headers?.origin || req.headers?.referer
+      if (!site) return true
+      const u = new URL(site)
+      if (!/^(127\.0\.0\.1|localhost|\[::1\])$/i.test(u.hostname)) return false
+      return !u.port || u.port === String(host).split(':')[1]
+    } catch { return false }
+  }
+
+  const sendJson = (res, code, obj) => {
+    try {
+      res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify(obj))
+    } catch { /* 客户端断了就算了 */ }
+  }
+
+  const readBody = (req) => new Promise((resolve) => {
+    let raw = ''
+    req.on('data', (c) => { raw += c; if (raw.length > 64 * 1024) req.destroy() })
+    req.on('end', () => { try { resolve(JSON.parse(raw || '{}')) } catch { resolve({}) } })
+    req.on('error', () => resolve({}))
+  })
+
+  const statusView = () => {
+    const s = stats(root)
+    return {
+      ok: true, root, configPath: configPath(), tools: cfg.tools, defaults: DEFAULT_TOOLS,
+      entries: s.entries, byKind: s.byKind, byTier: s.byTier, latest: s.latest, topTags: s.topTags,
+      indexPath: s.indexPath,
+    }
+  }
+
+  try {
+    const ws = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
+    if (ws?.register) {
+      ctx.effect(() => ws.register({
+        kind: 'prefix',
+        path: '/api/feiyu-kb',
+        handler: async (req, res) => {
+          if (!sameOriginOk(req)) { sendJson(res, 403, { ok: false, error: '只接受本机同源请求' }); return }
+          const url = new URL(req.url, 'http://127.0.0.1')
+          const path = url.pathname
+          try {
+            if (req.method === 'GET' && path === '/api/feiyu-kb/status') return sendJson(res, 200, statusView())
+            if (req.method === 'GET' && path === '/api/feiyu-kb/config') {
+              return sendJson(res, 200, { ok: true, config: cfg, root, configPath: configPath(), defaults: { tools: DEFAULT_TOOLS } })
+            }
+            if (req.method === 'POST' && path === '/api/feiyu-kb/config') {
+              const body = await readBody(req)
+              const patch = {}
+              if (typeof body.root === 'string') patch.root = body.root
+              if (body.tools && typeof body.tools === 'object') {
+                patch.tools = {}
+                for (const k of ['ingest', 'capture']) {
+                  if (typeof body.tools[k] === 'boolean') patch.tools[k] = body.tools[k]
+                }
+              }
+              cfg = saveConfig(patch)
+              if (typeof body.root === 'string') {
+                const next = applyRoot()
+                log(`设置页：库位置改为 ${next}`)
+              }
+              return sendJson(res, 200, { ok: true, config: cfg, ...statusView() })
+            }
+            if (req.method === 'POST' && path === '/api/feiyu-kb/index') {
+              const meta = rebuildIndex(root)
+              log('设置页：重建索引')
+              return sendJson(res, 200, { ok: true, ...meta, indexPath: join(root, 'INDEX.md') })
+            }
+            return sendJson(res, 404, { ok: false, error: `没有这个接口：${req.method} ${path}` })
+          } catch (e) {
+            return sendJson(res, 500, { ok: false, error: String(e?.message ?? e) })
+          }
+        },
+      }), 'feiyu-kb: /api/feiyu-kb 路由')
+      log('设置页接口已挂载：/api/feiyu-kb')
+    } else {
+      log('没有 webServer：设置页接口没挂（工具照常可用）')
+    }
+  } catch (e) {
+    log(`设置页接口没挂上：${e?.message ?? e}`)
+  }
 }
 
 /** 给宿主/排查看的：库在哪、有几条（不注册成工具） */

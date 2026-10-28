@@ -152,16 +152,32 @@ node lib/kb-cli.mjs index
 
 低于阈值（默认 3 分）不返回 —— **宁可空着，也不硬凑「相关」**。每条结果都带 `why`，方便判断真伪。
 
+## 设置页（DSH 设置 → 知识库）
+
+装好之后，DSH 的「设置」里会多一页 **知识库**，只放三件人需要的事：
+
+| 项 | 作用 |
+|---|---|
+| **知识库文件夹** | 直接改库位置，**点保存立刻生效**（不用重启、不用改 YAML）；留空 = 跟随 profile 配置 |
+| **kb_ingest 开关** | 关掉后模型调不动「抓网页 / 导文件 / 目录 / RSS」，已有笔记和别的工具不受影响 |
+| **kb_capture 开关** | 同上，控制「随手记」 |
+
+外加「重建索引 / 刷新」，底部还会显示当前条数、按类型分布、索引与设置文件路径。
+
+设置存在 `$DSH_HOME/feiyu-kb.config.json`，所以**卸载插件不会污染 profile 的 patch 文件**。
+接口是 `/api/feiyu-kb/{status,config,index}`，只接受本机同源请求（别的网页打不进来）。
+
 ## 配置：库放在哪个文件夹
 
 优先级从高到低：
 
-1. **bundle patch 里的 `config.root`** —— profile 层可改（`<DSH_HOME>/profiles/<p>/cordis.patch.yml` 里 `- id: feiyu-kb` 那段，或改本包自带的 `cordis.patch.yml`）；
-2. **环境变量 `FEIYU_KB_ROOT`**；
-3. **插件记下的生效路径** `$DSH_HOME/feiyu-kb.root`（插件每次加载会把自己实际用的路径写进去）；
-4. **默认 `~/dsh-feiyu-kb`**（Windows 上就是 `C:\Users\<你>\dsh-feiyu-kb`）。
+1. **设置页里填的路径**（`$DSH_HOME/feiyu-kb.config.json`）；
+2. **bundle patch 里的 `config.root`** —— profile 层可改（`<DSH_HOME>/profiles/<p>/cordis.patch.yml` 里 `- id: feiyu-kb` 那段，或改本包自带的 `cordis.patch.yml`）；
+3. **环境变量 `FEIYU_KB_ROOT`**；
+4. **插件记下的生效路径** `$DSH_HOME/feiyu-kb.root`（插件每次加载会把自己实际用的路径写进去）；
+5. **默认 `~/dsh-feiyu-kb`**（Windows 上就是 `C:\Users\<你>\dsh-feiyu-kb`）。
 
-第 3 条是为了让**命令行和插件用同一个库**：`kb-cli.mjs` 看不到 profile 配置，只能靠这个备忘文件对齐。不然配置里换过库位置的人，一用 CLI 兜底就会写进第二个库，知识被劈成两半。
+第 4 条是为了让**命令行和插件用同一个库**：`kb-cli.mjs` 看不到 profile 配置，只能靠这个备忘文件对齐。不然配置里换过库位置的人，一用 CLI 兜底就会写进第二个库，知识被劈成两半。
 
 怎么确认当前用的是哪个库：
 

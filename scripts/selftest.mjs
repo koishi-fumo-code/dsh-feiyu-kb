@@ -17,6 +17,10 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = mkdtempSync(join(tmpdir(), 'feiyu-kb-test-'))
+// ⚠️ 必须在 apply 之前隔离 DSH_HOME：设置页的 config.root 优先级高于 apply 传入的 root，
+//    不隔离的话自测会连上使用者真实的 feiyu-kb.config.json ⇒ 把测试条目写进真库（2026-10-28 踩过）
+const oldDshHome = process.env.DSH_HOME
+process.env.DSH_HOME = join(root, '.dsh-home')
 const mod = await import(pathToFileURL(resolve(here, '..', 'index.js')).href)
 
 const tools = new Map()
@@ -130,6 +134,20 @@ ok(cp.ok && cp.action === '新增', 'kb_capture 随手记入库', cp)
 const st2 = await tools.get('kb_status').execute({})
 ok(st2.ok && st2.entries === 4, '库里现在 4 条（2 视频 + 1 文件 + 1 随手记）', st2.entries)
 
+// ⑩ 设置项（config.mjs）：合并式保存 + 工具开关的默认值
+// （DSH_HOME 已经在上面隔离到临时目录，不会碰真实配置）
+const cfgMod = await import(pathToFileURL(resolve(here, '..', 'lib', 'config.mjs')).href)
+const defaultCfg = cfgMod.loadConfig()
+ok(typeof defaultCfg.tools.ingest === 'boolean' && typeof defaultCfg.tools.capture === 'boolean', '默认配置里两个工具开关都是布尔值', defaultCfg.tools)
+const saved = cfgMod.saveConfig({ tools: { capture: false } })
+ok(saved.tools.capture === false && saved.tools.ingest === defaultCfg.tools.ingest, '只改 capture，不动 ingest（合并式）', saved)
+const back = cfgMod.loadConfig()
+ok(back.tools.capture === false, '配置能读回来', back)
+cfgMod.saveConfig({ root: root.replace(/\\/g, '/') })
+ok(cfgMod.loadConfig().root.length > 0, 'root 也能存', cfgMod.loadConfig().root)
+
 console.log(`\n${pass} 通过 / ${fail} 失败`)
+if (oldDshHome === undefined) delete process.env.DSH_HOME
+else process.env.DSH_HOME = oldDshHome
 rmSync(root, { recursive: true, force: true })
 process.exit(fail ? 1 : 0)

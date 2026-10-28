@@ -1,7 +1,7 @@
 {
   "name": "dsh-feiyu-kb",
-  "version": "0.2.0",
-  "description": "DSH 插件：把本地 Markdown 知识库暴露成工具（搜索/读取/写入/相关推荐），并支持网页、文件、目录、RSS、随手记等多种进料方式 —— 任何模型运行时都能用",
+  "version": "0.3.0",
+  "description": "DSH 插件：本地 Markdown 知识库 —— 设置页可改库位置与工具开关，支持视频/网页/文件/目录/RSS/随手记多种进料",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -10,6 +10,7 @@
   },
   "files": [
     "index.js",
+    "client.js",
     "lib",
     "scripts",
     "cordis.patch.yml",
@@ -31,6 +32,14 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
     }
   },
   "repository": {
