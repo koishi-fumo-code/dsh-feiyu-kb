@@ -1,6 +1,6 @@
 {
   "name": "dsh-feiyu-kb",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "DSH 插件：本地 Markdown 知识库 —— 设置页可改库位置与工具开关，支持视频/网页/文件/目录/RSS/随手记多种进料",
   "type": "module",
   "main": "index.js",

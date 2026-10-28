@@ -375,10 +375,10 @@ export function apply(ctx, config) {
     }
   }
 
-  try {
-    const ws = typeof ctx.get === 'function' ? ctx.get('webServer') : undefined
-    if (ws?.register) {
-      ctx.effect(() => ws.register({
+  const mountRoutes = (ws, hostCtx) => {
+    if (!ws?.register) { log('没有 webServer（或没有 register）：设置页接口没挂（工具照常可用）'); return }
+    try {
+      hostCtx.effect(() => ws.register({
         kind: 'prefix',
         path: '/api/feiyu-kb',
         handler: async (req, res) => {
@@ -419,11 +419,24 @@ export function apply(ctx, config) {
         },
       }), 'feiyu-kb: /api/feiyu-kb 路由')
       log('设置页接口已挂载：/api/feiyu-kb')
-    } else {
-      log('没有 webServer：设置页接口没挂（工具照常可用）')
+    } catch (e) {
+      log(`设置页接口没挂上：${e?.message ?? e}`)
     }
-  } catch (e) {
-    log(`设置页接口没挂上：${e?.message ?? e}`)
+  }
+
+  // ⭐ webServer 是**异步就绪**的服务：在 apply() 里直接 ctx.get('webServer') 时有时无
+  //    （2026-10-28 实测：同一份代码，13:48 挂上了、14:00 又没挂上）⇒ 必须用运行时注入，
+  //    等这个服务真的起来再挂路由。
+  //    ⚠️ 不能写进 `inject`：headless profile 没有 webServer，那样整条插件都不激活、工具全没。
+  if (typeof ctx.inject === 'function') {
+    try {
+      ctx.inject(['webServer'], (sub) =>
+        mountRoutes((typeof sub.get === 'function' ? sub.get('webServer') : undefined) || sub.webServer, sub))
+    } catch (e) {
+      log(`运行时注入 webServer 失败：${e?.message ?? e}`)
+    }
+  } else {
+    mountRoutes(typeof ctx.get === 'function' ? ctx.get('webServer') : undefined, ctx)
   }
 }
 
