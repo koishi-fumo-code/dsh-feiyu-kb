@@ -2,16 +2,44 @@
 
 把本地一个 **纯 Markdown 的知识库**，变成 DSH 里**所有模型运行时**都能调用的工具：搜索、读全文、写入、找相关旧条目、重建索引。
 
-没有数据库、没有向量库、没有网络请求 —— 一条视频 / 一份资料一个 `.md` 文件。删了索引能重建，拷走目录就搬家，`grep` 也能搜。
+**知识从哪来**：不依赖任何特定插件 —— 网页、本地文件、整个目录、RSS 订阅、随手一段话，都能收进来（见「进料通道」）。
+
+没有数据库、没有向量库 —— 一份资料一个 `.md` 文件。删了索引能重建，拷走目录就搬家，`grep` 也能搜。
 
 ```
+kb_ingest   收外部东西：from=url | file | dir | feed
+kb_capture  随手记一段文本（聊天 / 书 / 会议）
+kb_add      手工新增或更新（判重键 BV 号 / url；合并式更新）
 kb_search   搜（标题 / UP / 标签 / 正文，多词 AND；不给词 = 列最近）
-kb_read     读一篇全文（id / BV号 / 相对路径）
-kb_add      新增或更新（判重键 BV 号；合并式更新：给了才覆盖、没给保留、标签并集）
 kb_related  找同主题的旧条目（标签加权 + 中文二字组 + 英文/型号词），每条给理由
+kb_read     读一篇全文（id / BV号 / 相对路径）
 kb_index    重建 INDEX.md / index.jsonl / .kb/meta.json
-kb_status   多少条、按类型/档位分布、最近几条、标签排行
+kb_status   多少条、按来源 / 类型 / 档位分布、最近几条、标签排行
 ```
+
+## 进料通道（2026-10-28 加）
+
+之前知识只有一个来源——「刷B站」插件每轮归档。插件一停、B站一断，库就饿死。现在补齐了**不依赖任何插件**的通道：
+
+| 通道 | 命令 / 参数 | 说明 |
+|---|---|---|
+| **网页** | `kb_ingest from=url url=…` | 抓正文、抽标题、摘要点；只 http/https，**不抓内网 / 本机**（SSRF 防护），单页上限 5MB |
+| **本地文件** | `kb_ingest from=file path=…` | `.md` / `.txt` / `.json` / 代码等文本；标题取第一个 `# 标题` |
+| **整个目录** | `kb_ingest from=dir dir=… ext=.md` | 批量导入，一篇一个条目，单条失败不影响整批 |
+| **RSS / Atom** | `kb_ingest from=feed url=… limit=10` | 每条收一条，默认 `status: 待看` |
+| **随手一段** | `kb_capture text="…"` | 自动起标题（第一句）、抽要点，标 `via: note` |
+
+```bash
+# 命令行等价物
+node lib/kb-cli.mjs ingest --from url  --url https://example.com/post --tags 阅读
+node lib/kb-cli.mjs ingest --from file --path ./notes/raft.md --tags 分布式
+node lib/kb-cli.mjs ingest --from dir  --dir ./notes --ext .md
+node lib/kb-cli.mjs ingest --from feed --url https://example.com/atom.xml --limit 5
+node lib/kb-cli.mjs capture --text "今天学到：KV Cache 量化能把显存压到一半，代价是精度。"
+```
+
+⚠️ **要点是"如实摘"，不是模型总结**：优先小标题、列表项、正文句子；抽不出来就只留一句话，绝不编。
+⚠️ 抓网页时会自动跳过导航条 / 目录 / 日期作者那类元信息，但**不同站点的页面结构差别很大**，遇到抽歪的，直接用 `kb_add` 手写一条更省事。
 
 ## 为什么是文件
 
@@ -149,13 +177,14 @@ node lib/kb-cli.mjs where     # 命令行视角
 ## 开发
 
 ```bash
-node scripts/selftest.mjs   # 21 条断言：注册 / 落盘 / 判重 / 搜索 / 越权路径 / 索引 / 相关推荐
+node scripts/selftest.mjs   # 32 条断言：注册 / 落盘 / 判重 / 搜索 / 越权路径 / 索引 / 相关推荐 / 进料通道
 ```
 
 | 文件 | 作用 |
 |---|---|
-| `index.js` | DSH 插件入口：注册 6 只工具，`apply` 绝不抛异常 |
+| `index.js` | DSH 插件入口：注册 8 只工具，`apply` 绝不抛异常 |
 | `lib/kb.mjs` | 知识库本体：写入、合并更新、搜索、相关推荐、索引 |
+| `lib/ingest.mjs` | 进料：抓网页、HTML→文本、抽要点、RSS 解析、文件 / 目录读取 |
 | `lib/kb-cli.mjs` | 命令行入口 |
 | `scripts/install.mjs` | 装：链接 + 依赖 + bundle 登记（幂等） |
 | `scripts/uninstall.mjs` | 卸：清依赖 / bundle 名 / 链接 / 历史 patch 行，默认保留数据 |

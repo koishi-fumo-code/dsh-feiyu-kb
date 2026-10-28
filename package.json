@@ -1,7 +1,7 @@
 {
   "name": "dsh-feiyu-kb",
-  "version": "0.1.1",
-  "description": "DSH 插件：把本地 Markdown 知识库暴露成 kb_search / kb_read / kb_add / kb_related / kb_index / kb_status —— 任何模型运行时都能用",
+  "version": "0.2.0",
+  "description": "DSH 插件：把本地 Markdown 知识库暴露成工具（搜索/读取/写入/相关推荐），并支持网页、文件、目录、RSS、随手记等多种进料方式 —— 任何模型运行时都能用",
   "type": "module",
   "main": "index.js",
   "exports": {

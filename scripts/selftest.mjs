@@ -8,7 +8,7 @@
  * 用临时目录当 root，不碰真库。用法：node scripts/selftest.mjs
  * ============================================================================
  */
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -33,8 +33,8 @@ const ok = (cond, label, extra) => {
 console.log(`root = ${root}\n`)
 
 // ① 注册
-const want = ['kb_status', 'kb_search', 'kb_read', 'kb_add', 'kb_index']
-ok(want.every((n) => tools.has(n)), `5 只工具都注册了（${[...tools.keys()].join(', ')}）`)
+const want = ['kb_status', 'kb_search', 'kb_read', 'kb_add', 'kb_related', 'kb_ingest', 'kb_capture', 'kb_index']
+ok(want.every((n) => tools.has(n)), `8 只工具都注册了（${[...tools.keys()].join(', ')}）`)
 ok(tools.get('kb_add').parameters.type === 'object'
   && tools.get('kb_add').parameters.additionalProperties === false, 'kb_add 的 parameters 是合法 JSONSchema')
 
@@ -102,6 +102,33 @@ ok(rel2.ok && !rel2.items.some((x) => x.id === add1.id), 'exclude 能把"自己"
 
 const rel3 = await tools.get('kb_related').execute({ text: '完全无关的一句话 猫 吃饭', tags: '猫', limit: 5 })
 ok(rel3.ok && rel3.total === 0, '不相关时不硬凑', rel3)
+
+// ⑨ 其它进料通道（不依赖刷B站插件）
+const ing = await import(pathToFileURL(resolve(here, '..', 'lib', 'ingest.mjs')).href)
+ok(!ing.htmlToText('<script>坏代码()</script><p>正文在这里</p>').includes('坏代码'), 'htmlToText 会丢掉 script')
+ok(ing.htmlToText('<h2>小标题</h2><p>一段正文</p>').includes('## 小标题'), 'htmlToText 保留标题层级')
+ok(ing.extractTitle('<html><head><title>页面标题</title></head></html>') === '页面标题', 'extractTitle 取到 <title>')
+ok(ing.guessPoints('## 要点一\n- 这是一条足够长的要点内容\n普通句子。', 3).length >= 2, 'guessPoints 会抽标题行和列表项')
+const feed = ing.parseFeed('<rss><channel><item><title>文章A</title><link>https://example.com/a</link><description>摘要</description></item></channel></rss>')
+ok(feed.length === 1 && feed[0].title === '文章A' && feed[0].link === 'https://example.com/a', 'parseFeed 解析 RSS', feed)
+let ssrf = false
+try { ing.assertSafeUrl('http://127.0.0.1/x') } catch { ssrf = true }
+ok(ssrf, 'SSRF 防护：拒绝内网地址')
+
+const tmplFile = join(root, '导入测试.md')
+writeFileSync(tmplFile, '# 本地笔记标题\n\n## 要点\n- 这是文件里的一条要点，够长\n- 第二条要点也够长一点\n', 'utf8')
+const f1 = await tools.get('kb_ingest').execute({ from: 'file', path: tmplFile, tags: '导入,测试', tier: '可以看' })
+ok(f1.ok && f1.action === '新增' && f1.title === '本地笔记标题', 'kb_ingest from=file 导入了 md', f1)
+ok(f1.via === 'file', '条目记了 via: file', f1.via)
+
+const f2 = await tools.get('kb_ingest').execute({ from: 'file', path: tmplFile })
+ok(f2.ok && f2.action === '更新', '同一个文件再导是「更新」', f2)
+
+const cp = await tools.get('kb_capture').execute({ text: '随手记一条：KV Cache 量化能省一半显存，但精度会掉。', tags: '测试,随手记' })
+ok(cp.ok && cp.action === '新增', 'kb_capture 随手记入库', cp)
+
+const st2 = await tools.get('kb_status').execute({})
+ok(st2.ok && st2.entries === 4, '库里现在 4 条（2 视频 + 1 文件 + 1 随手记）', st2.entries)
 
 console.log(`\n${pass} 通过 / ${fail} 失败`)
 rmSync(root, { recursive: true, force: true })

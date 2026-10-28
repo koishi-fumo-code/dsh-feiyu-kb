@@ -25,6 +25,8 @@ import {
   rememberRoot, searchEntries, relatedEntries, findEntry, rebuildIndex, stats, listEntries,
 } from './lib/kb.mjs'
 
+import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
+
 export const name = 'feiyu-kb'
 export const inject = ['tools']
 
@@ -211,6 +213,93 @@ export function apply(ctx, config) {
           limit: args.limit,
         })
         return { ok: true, root, ...r }
+      } catch (err) {
+        return { ok: false, error: String(err?.message ?? err) }
+      }
+    },
+  })
+
+  /* ─────────────── kb_ingest：其它进料通道 ─────────────── */
+  tool({
+    name: 'kb_ingest',
+    description: '把**外部东西**收进知识库 —— 不依赖刷B站插件：\n'
+      + '- `from=url`：抓一个网页，抽标题 / 正文 / 要点（只 http/https，不抓内网）\n'
+      + '- `from=file`：导入一个本地文本文件（md / txt / json / 代码…）\n'
+      + '- `from=dir`：批量导入一个目录里的文本文件（一篇一个条目）\n'
+      + '- `from=feed`：RSS / Atom 订阅，每条收一条（默认 status=待看）\n'
+      + '⚠️ 要点是**从正文里如实摘的**（标题行 / 列表 / 句子），不是模型总结；抽不出来就只留一句话。\n'
+      + '⚠️ 同一个 url / BV 号再收一次是「更新」，不会多出一条。',
+    parameters: {
+      from: { type: 'string', description: 'url | file | dir | feed' },
+      url: { type: 'string', description: 'from=url 或 from=feed 时的地址' },
+      path: { type: 'string', description: 'from=file 时的文件绝对/相对路径' },
+      dir: { type: 'string', description: 'from=dir 时的目录' },
+      ext: { type: 'string', description: 'from=dir 只收这个扩展名（例：.md）' },
+      limit: { type: 'number', description: 'dir 最多几个文件 / feed 最多几条（默认 10~20）' },
+      tags: { type: 'string', description: '标签，逗号分隔' },
+      kind: { type: 'string', description: `类型：${KINDS.join(' / ')}` },
+      tier: { type: 'string', description: `档位：${TIERS.join(' / ')}` },
+      summary: { type: 'string', description: '（可选）自己写一句话，覆盖自动抽取的' },
+      notes: { type: 'string', description: '(可选) 备注' },
+    },
+    async execute(args) {
+      const from = String(args.from || '').trim().toLowerCase()
+      const common = {
+        tags: String(args.tags || ''), kind: String(args.kind || '知识'),
+        tier: String(args.tier || '可以看'), notes: String(args.notes || ''), summary: String(args.summary || ''),
+      }
+      try {
+        if (from === 'url') {
+          if (!args.url) return { ok: false, error: 'from=url 需要 url' }
+          return { ok: true, ...(await ingestUrl(root, { url: String(args.url), ...common })) }
+        }
+        if (from === 'file') {
+          if (!args.path) return { ok: false, error: 'from=file 需要 path' }
+          return { ok: true, ...ingestFile(root, { path: String(args.path), ...common }) }
+        }
+        if (from === 'dir') {
+          if (!args.dir) return { ok: false, error: 'from=dir 需要 dir' }
+          return { ok: true, ...ingestDir(root, { dir: String(args.dir), ext: String(args.ext || ''), limit: args.limit, ...common }) }
+        }
+        if (from === 'feed') {
+          if (!args.url) return { ok: false, error: 'from=feed 需要 url' }
+          return { ok: true, ...(await ingestFeed(root, { url: String(args.url), limit: args.limit, ...common })) }
+        }
+        return { ok: false, error: `from 只能是 url / file / dir / feed，收到「${from || '(空)'}」` }
+      } catch (err) {
+        return { ok: false, error: String(err?.message ?? err) }
+      }
+    },
+  })
+
+  /* ─────────────── kb_capture：随手记 ─────────────── */
+  tool({
+    name: 'kb_capture',
+    description: '随手记：把一段文本（聊天里的、书上的、脑子里的）直接存成条目 —— 自动起标题、抽要点、标 `via: note`。\n'
+      + '比 kb_add 轻：不用想 id / url / 档位，只要给 text。',
+    parameters: {
+      text: { type: 'string', description: '要存的内容（必填）' },
+      title: { type: 'string', description: '标题（不给就用第一句）' },
+      tags: { type: 'string', description: '标签，逗号分隔' },
+      kind: { type: 'string', description: `类型：${KINDS.join(' / ')}` },
+      tier: { type: 'string', description: `档位：${TIERS.join(' / ')}` },
+      notes: { type: 'string', description: '备注' },
+      source: { type: 'string', description: '来源（默认 chat；例：book / podcast / 会议）' },
+    },
+    async execute(args) {
+      try {
+        const r = capture(root, {
+          title: args.title ? String(args.title) : '',
+          text: String(args.text || ''),
+          tags: String(args.tags || ''),
+          kind: String(args.kind || '知识'),
+          tier: String(args.tier || '可以看'),
+          notes: String(args.notes || ''),
+          source: String(args.source || 'chat'),
+        })
+        const meta = rebuildIndex(root)
+        log(`kb_capture ${r.action} ${r.id}`)
+        return { ok: true, ...r, total: meta.entries }
       } catch (err) {
         return { ok: false, error: String(err?.message ?? err) }
       }
