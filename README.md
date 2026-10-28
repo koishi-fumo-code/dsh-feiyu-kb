@@ -1,5 +1,7 @@
 # dsh-feiyu-kb
 
+▶ **[88 秒介绍片](https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.3.1/dsh-feiyu-kb-intro.mp4)** · [封面](https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.3.1/poster.png)
+
 把本地一个 **纯 Markdown 的知识库**，变成 DSH 里**所有模型运行时**都能调用的工具：搜索、读全文、写入、找相关旧条目、重建索引。
 
 **知识从哪来**：不依赖任何特定插件 —— 网页、本地文件、整个目录、RSS 订阅、随手一段话，都能收进来（见「进料通道」）。
