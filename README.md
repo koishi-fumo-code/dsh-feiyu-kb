@@ -57,8 +57,19 @@ tags: ["推理", "KVCache"]
 
 ## 安装
 
+**方式 A：克隆仓库**
+
 ```bash
-git clone <本仓库> dsh-feiyu-kb
+git clone https://github.com/koishi-fumo-code/dsh-feiyu-kb.git
+node dsh-feiyu-kb/scripts/install.mjs --root "/你的/知识库目录"
+```
+
+**方式 B：用 Release 里的 tgz**（离线 / 内网 / 不想 git）
+
+```bash
+curl -L -o dsh-feiyu-kb.tgz \
+  https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.1.0/dsh-feiyu-kb-0.1.0.tgz
+tar -xzf dsh-feiyu-kb.tgz && mv package dsh-feiyu-kb
 node dsh-feiyu-kb/scripts/install.mjs --root "/你的/知识库目录"
 ```
 
