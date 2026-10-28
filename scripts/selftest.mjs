@@ -42,6 +42,15 @@ ok(want.every((n) => tools.has(n)), `8 只工具都注册了（${[...tools.keys(
 ok(tools.get('kb_add').parameters.type === 'object'
   && tools.get('kb_add').parameters.additionalProperties === false, 'kb_add 的 parameters 是合法 JSONSchema')
 
+// ①b 包清单自检：声明了 dsh.client 就必须导出 ./client
+// ⚠️ 2026-10-28 事故：漏了这一行 ⇒ client-modules（必需插件）报
+//    "declares dsh.client but exports no ./client bundle" ⇒ **整个 DSH 起不来**，
+//    连崩三次后 profile 被重置成最小配置，使用者所有插件全没了。
+const selfPkg = JSON.parse(readFileSync(resolve(here, '..', 'package.json'), 'utf8'))
+ok(!selfPkg?.dsh?.client || Boolean(selfPkg?.exports?.['./client']),
+  '声明 dsh.client 就导出了 ./client（否则整机启动失败）', selfPkg?.exports)
+ok(!selfPkg?.dsh?.client || existsSync(resolve(here, '..', 'client.js')), 'client.js 文件真实存在')
+
 // ② 新增
 const add1 = await tools.get('kb_add').execute({
   title: '测试：DeepInfer 的 P/D 分离',
