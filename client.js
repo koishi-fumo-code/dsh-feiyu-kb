@@ -127,6 +127,16 @@ window.__ModuleLoader__.load({
       }
 
       /** 改压缩配置（开关 / 阈值 / 保留比例）—— 宿主会写 profile 的 patch（带备份+校验） */
+      /** 目录同步设置（开关 / 目录列表） */
+      const saveSync = async (body, label) => {
+        setBusy('sync')
+        try {
+          const r = await jpost('/config', { sync: body })
+          setSt(r)
+          say((label || '已保存') + '（立即生效）', 'good')
+        } catch (e) { say('保存失败：' + e.message, 'warn') } finally { setBusy('') }
+      }
+
       const saveCtx = async (body, label) => {
         setBusy('ctx')
         try {
@@ -149,6 +159,8 @@ window.__ModuleLoader__.load({
       const tools = (st && st.tools) || { ingest: true, capture: true }
       const ctx = (st && st.ctx) || { enabled: false, thresholdRatio: 0.6, retainRatio: 0.12 }
       const ctxApplied = (st && st.ctxApplied) || { applied: false }
+      const sync = (st && st.sync) || { enabled: false, dirs: [], intervalMinutes: 10 }
+      const syncState = (st && st.syncState) || { files: 0, dirs: [] }
 
       return h('div', { 'data-fk-page': '' },
         // ── 上下文压缩（会话跑得久一点） ──
@@ -236,6 +248,34 @@ window.__ModuleLoader__.load({
           h('div', { 'data-fk-note': '' }, '查崩溃日志、profile 有没有被回滚、插件包清单、知识库能不能读；报告写到 DSH 家目录的 diagnostics/'),
           diag && diag.report
             ? h('pre', { 'data-fk-kv': '', style: { maxHeight: '220px', overflow: 'auto', whiteSpace: 'pre-wrap' } }, diag.report)
+            : null),
+
+        // ── 目录同步（从上游插件的产出里"捞"知识）──
+        h('div', { 'data-fk-sec': '' },
+          h('div', { 'data-fk-h': '' }, '目录同步'),
+          h('div', { 'data-fk-switch-row': '' },
+            h('button', {
+              'data-fk-sw': '', 'data-on': sync.enabled ? '' : undefined,
+              'aria-pressed': sync.enabled ? 'true' : 'false', disabled: busy === 'sync',
+              onClick: () => saveSync({ enabled: !sync.enabled }, sync.enabled ? '已关闭目录同步' : '已开启目录同步'),
+            }),
+            h('div', { 'data-fk-switch-text': '' },
+              h('div', { 'data-fk-label': '' }, '定时扫目录，把新笔记收进知识库'),
+              h('div', { 'data-fk-note': '' },
+                '兜底用：不管刷视频那轮跑没跑成，只要它把笔记落了盘，知识就留得下来。'
+                + `每 ${sync.intervalMinutes || 10} 分钟一次，已同步 ${syncState.files || 0} 个文件。`))),
+          h('div', { 'data-fk-row': '' },
+            h('input', {
+              'data-fk-input': '', value: (sync.dirs && sync.dirs.length ? sync.dirs : []).join(' ; '),
+              placeholder: '目录，多个用 ; 分隔（留空 = ~/.dsh/whale-work）',
+              onChange: (e) => setSt({ ...st, sync: { ...sync, dirs: e.target.value.split(';').map((s) => s.trim()).filter(Boolean) } }),
+            }),
+            h('button', {
+              'data-fk-btn': '', disabled: busy === 'sync',
+              onClick: () => saveSync({ dirs: (sync.dirs || []) }, '已保存目录'),
+            }, '保存')),
+          syncState.dirs && syncState.dirs.length
+            ? h('div', { 'data-fk-kv': '' }, syncState.dirs.map((d) => `${d.exists ? '✓' : '✗'} ${d.dir}`).join('   '))
             : null),
 
         // ── 维护 ──

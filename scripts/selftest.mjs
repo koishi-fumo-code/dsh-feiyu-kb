@@ -8,7 +8,7 @@
  * 用临时目录当 root，不碰真库。用法：node scripts/selftest.mjs
  * ============================================================================
  */
-import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -155,8 +155,21 @@ ok(back.tools.capture === false, '配置能读回来', back)
 cfgMod.saveConfig({ root: root.replace(/\\/g, '/') })
 ok(cfgMod.loadConfig().root.length > 0, 'root 也能存', cfgMod.loadConfig().root)
 
+// ⑪ 目录同步：新的收、旧的不重复收、说明文件跳过
+const syncMod = await import(pathToFileURL(resolve(here, '..', 'lib', 'sync-dirs.mjs')).href)
+const srcDir = mkdtempSync(join(tmpdir(), 'feiyu-src-'))  // 必须在知识库根之外（根内的文件会被当成自己的文件跳过）
+mkdirSync(srcDir, { recursive: true })
+writeFileSync(join(srcDir, 'AGENTS.md'), '# 约定\n\n这份是说明文件，不该被当成笔记收进来。\n'.repeat(6), 'utf8')
+writeFileSync(join(srcDir, 'note-1.md'), '# 上游笔记\n\n这条讲的是 KV Cache 量化：显存省一半、精度略降。\n\n- 优点：省显存\n- 代价：精度\n', 'utf8')
+const sy1 = syncMod.syncDirs({ root, dirs: [srcDir] })
+ok(sy1.imported.length === 1, '目录同步收进 1 篇', sy1.imported.length)
+ok(!JSON.stringify(sy1.imported).includes('AGENTS'), 'AGENTS.md 被跳过', sy1.imported.map((x) => x.title))
+const sy2 = syncMod.syncDirs({ root, dirs: [srcDir] })
+ok(sy2.imported.length === 0, '再同步不重复收', sy2.imported.length)
+
 console.log(`\n${pass} 通过 / ${fail} 失败`)
 if (oldDshHome === undefined) delete process.env.DSH_HOME
 else process.env.DSH_HOME = oldDshHome
+rmSync(srcDir, { recursive: true, force: true })
 rmSync(root, { recursive: true, force: true })
 process.exit(fail ? 1 : 0)

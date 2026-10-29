@@ -28,8 +28,9 @@ import {
 } from './lib/kb.mjs'
 
 import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
-import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS, DEFAULT_CTX } from './lib/config.mjs'
+import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS, DEFAULT_CTX, DEFAULT_SYNC } from './lib/config.mjs'
 import { syncCompaction, compactionStatus } from './lib/ctx-save.mjs'
+import { syncDirs, syncStatus, DEFAULT_SYNC_DIRS } from './lib/sync-dirs.mjs'
 import { startWatchdog, runDiagnosis, lastWatchdogState } from './lib/watchdog.mjs'
 
 export const name = 'feiyu-kb'
@@ -102,6 +103,12 @@ export function apply(ctx, config) {
     const norm = String(p).replace(/\\/g, '/')
     const r = root.replace(/\\/g, '/')
     return norm === r || norm.startsWith(r + '/')
+  }
+
+  /** ctx.effect 不一定存在（测试宿主、老版本宿主）—— apply 绝不抛是硬规矩，所以包一层 */
+  const effect = (fn, label) => {
+    try { if (typeof ctx.effect === 'function') return ctx.effect(fn, label) } catch (e) { log('effect 注册失败：' + (e?.message ?? e)) }
+    return undefined
   }
 
   const tool = (spec) => {
@@ -373,9 +380,12 @@ export function apply(ctx, config) {
     const s = stats(root)
     let ctxApplied = { applied: false }
     try { ctxApplied = compactionStatus(profileDirs()[0]) } catch { /* 读不到就算了 */ }
+    const syncDirsEff = (cfg.sync.dirs && cfg.sync.dirs.length) ? cfg.sync.dirs : DEFAULT_SYNC_DIRS
+    let syncState = { files: 0, updatedAt: '', dirs: [] }
+    try { syncState = syncStatus(syncDirsEff) } catch { /* 忽略 */ }
     return {
-      ok: true, root, configPath: configPath(), tools: cfg.tools, ctx: cfg.ctx, ctxApplied,
-      defaults: { tools: DEFAULT_TOOLS, ctx: DEFAULT_CTX },
+      ok: true, root, configPath: configPath(), tools: cfg.tools, ctx: cfg.ctx, ctxApplied, sync: cfg.sync, syncState,
+      defaults: { tools: DEFAULT_TOOLS, ctx: DEFAULT_CTX, sync: DEFAULT_SYNC },
       entries: s.entries, byKind: s.byKind, byTier: s.byTier, latest: s.latest, topTags: s.topTags,
       indexPath: s.indexPath,
     }
@@ -384,7 +394,7 @@ export function apply(ctx, config) {
   const mountRoutes = (ws, hostCtx) => {
     if (!ws?.register) { log('没有 webServer（或没有 register）：设置页接口没挂（工具照常可用）'); return }
     try {
-      hostCtx.effect(() => ws.register({
+      ;(typeof hostCtx.effect === 'function' ? hostCtx.effect : effect)(() => ws.register({
         kind: 'prefix',
         path: '/api/feiyu-kb',
         handler: async (req, res) => {
@@ -413,7 +423,14 @@ export function apply(ctx, config) {
                   if (body.ctx[k] !== undefined) patch.ctx[k] = body.ctx[k]
                 }
               }
+              if (body.sync && typeof body.sync === 'object') {
+                patch.sync = {}
+                if (typeof body.sync.enabled === 'boolean') patch.sync.enabled = body.sync.enabled
+                if (Array.isArray(body.sync.dirs)) patch.sync.dirs = body.sync.dirs
+                if (body.sync.intervalMinutes !== undefined) patch.sync.intervalMinutes = body.sync.intervalMinutes
+              }
               cfg = saveConfig(patch)
+              if (patch.sync) startSync()          // 目录同步改了：重启定时器（立即生效，不用重启）
               if (typeof body.root === 'string') {
                 const next = applyRoot()
                 log(`设置页：库位置改为 ${next}`)
@@ -487,6 +504,37 @@ export function apply(ctx, config) {
     log(`压缩配置同步没跑成：${e?.message ?? e}`)
   }
 
+  /* ─────────────── 目录同步：从上游插件的产出里"捞"知识 ─────────────── */
+  // 2026-10-29：刷视频的自动归档一次都没跑通（headless 在模型路由就失败了）。
+  // 这一层是兜底：定时扫指定目录里的 .md，发现新的就收进知识库 —— 不管上游跑没跑成。
+  let syncTimer = null
+  let syncBootTimer = null
+  const runSync = () => {
+    try {
+      const dirs = (cfg.sync.dirs && cfg.sync.dirs.length) ? cfg.sync.dirs : DEFAULT_SYNC_DIRS
+      const r = syncDirs({ root, dirs, log })
+      if (r.imported.length) log(`目录同步：+${r.imported.length} 条`)
+      return r
+    } catch (e) { log(`目录同步没跑成：${e?.message ?? e}`); return null }
+  }
+  const startSync = () => {
+    try { if (syncTimer) clearInterval(syncTimer) } catch { /* 忽略 */ }
+    try { if (syncBootTimer) clearTimeout(syncBootTimer) } catch { /* 忽略 */ }
+    syncTimer = null
+    syncBootTimer = null
+    if (!cfg.sync.enabled) return
+    syncBootTimer = setTimeout(runSync, 6000)
+    syncBootTimer.unref?.()
+    syncTimer = setInterval(runSync, Math.max(60_000, Number(cfg.sync.intervalMinutes || 10) * 60_000))
+    syncTimer.unref?.()
+    log(`目录同步已启动（每 ${cfg.sync.intervalMinutes || 10} 分钟，目录：${((cfg.sync.dirs && cfg.sync.dirs.length) ? cfg.sync.dirs : DEFAULT_SYNC_DIRS).join(' ; ')}）`)
+  }
+  startSync()
+  effect(() => () => {
+    try { if (syncTimer) clearInterval(syncTimer) } catch { /* 忽略 */ }
+    try { if (syncBootTimer) clearTimeout(syncBootTimer) } catch { /* 忽略 */ }
+  }, 'feiyu-kb: 目录同步定时器')
+
   /* ─────────────── 异常自动体检（看门狗） ─────────────── */
   // 启动 3 秒后先查一遍崩溃日志（补报"上次起不来"），之后每 5 分钟扫一次新崩溃 / profile 被回滚。
   try {
@@ -500,7 +548,7 @@ export function apply(ctx, config) {
         log(`⚠️ 体检发现问题：${bad.join('；')} —— 报告：${r.file}`)
       },
     })
-    ctx.effect(() => () => wd.stop(), 'feiyu-kb: 异常看门狗')
+    effect(() => () => wd.stop(), 'feiyu-kb: 异常看门狗')
     log('异常看门狗已启动（启动 + 每 10 分钟查崩溃日志）')
   } catch (e) {
     log(`看门狗没起来：${e?.message ?? e}`)

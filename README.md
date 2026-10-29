@@ -188,7 +188,26 @@ DSH 的 token 计量是 **「4 个字符 ≈ 1 token」的估算**，官方文�
 - **生效**：改完需要重启 DSH（或等 profile 的 patch 层热重载）。
 - 另外 DSH 自带 **`/compact`** 命令可以随时手动压一次；还带 `dsh-compaction-tool-result-pruner`，压缩前会先裁剪超大工具输出。
 
-## 异常自动体检（看门狗）
+## 接上「刷视频」插件（两条路，建议都开）
+
+**A. 让那一轮自己归档（推荐）**：把下面这份约定放到刷视频插件的**会话工作目录**（`~/.dsh/whale-work/AGENTS.md`），DSH 每轮会把它注入给被唤醒的 agent：
+
+```markdown
+# 刷视频这一轮的额外约定
+每轮挑中有知识含量的视频后，调用 kb_add 归档：title / bvid / up / tags / summary / points；
+要点必须是字幕里真读到的，读不到就只写 summary。归档完再调 kb_related 看看库里的旧笔记。
+```
+
+它是**指令注入**，不碰插件的代码，也不影响人设。
+
+**B. 目录同步（兜底，设置页开关）**：定时扫指定目录里的 `.md`（默认 `~/.dsh/whale-work`），发现新的就收进知识库。
+
+- 去重靠 `$DSH_HOME/feiyu-kb.synced.json` 记「路径 → mtime:size」，变过才算新内容
+- 跳过 `AGENTS.md` / `README.md` 这类说明文件，也跳过知识库自己目录里的文件（防止套娃）
+- 上游跑没跑成都不影响它 —— 只要文件落了盘，知识就留得下来
+
+> 2026-10-29 的复盘：旧的刷视频插件靠 `dsh --profile headless` 跑，而 headless 里没有当前模型的 adapter（`NO_ADAPTER: raccoon`），整轮在模型路由那步就失败了 —— 「刷完自动归档」一次都没成功。新插件（dsh-bili-whale）是在**应用内会话**里驱动 agent 的，不受这个影响，而且它唤醒的 agent 本来就能用 `kb_add`。
+
 
 DSH 崩过之后，插件会在**下一次启动时自动体检**，之后每 5 分钟扫一遍崩溃日志；发现新崩溃、或者 profile 被回滚（bundles 数量骤降），就写一份报告：
 
