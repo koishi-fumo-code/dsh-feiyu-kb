@@ -28,7 +28,8 @@ import {
 } from './lib/kb.mjs'
 
 import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
-import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS } from './lib/config.mjs'
+import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS, DEFAULT_CTX } from './lib/config.mjs'
+import { syncCompaction, compactionStatus } from './lib/ctx-save.mjs'
 import { startWatchdog, runDiagnosis, lastWatchdogState } from './lib/watchdog.mjs'
 
 export const name = 'feiyu-kb'
@@ -368,9 +369,13 @@ export function apply(ctx, config) {
     req.on('error', () => resolve({}))
   })
 
-  const statusView = () => {    const s = stats(root)
+  const statusView = () => {
+    const s = stats(root)
+    let ctxApplied = { applied: false }
+    try { ctxApplied = compactionStatus(profileDirs()[0]) } catch { /* 读不到就算了 */ }
     return {
-      ok: true, root, configPath: configPath(), tools: cfg.tools, defaults: DEFAULT_TOOLS,
+      ok: true, root, configPath: configPath(), tools: cfg.tools, ctx: cfg.ctx, ctxApplied,
+      defaults: { tools: DEFAULT_TOOLS, ctx: DEFAULT_CTX },
       entries: s.entries, byKind: s.byKind, byTier: s.byTier, latest: s.latest, topTags: s.topTags,
       indexPath: s.indexPath,
     }
@@ -401,12 +406,29 @@ export function apply(ctx, config) {
                   if (typeof body.tools[k] === 'boolean') patch.tools[k] = body.tools[k]
                 }
               }
+              if (body.ctx && typeof body.ctx === 'object') {
+                patch.ctx = {}
+                if (typeof body.ctx.enabled === 'boolean') patch.ctx.enabled = body.ctx.enabled
+                for (const k of ['thresholdRatio', 'retainRatio']) {
+                  if (body.ctx[k] !== undefined) patch.ctx[k] = body.ctx[k]
+                }
+              }
               cfg = saveConfig(patch)
               if (typeof body.root === 'string') {
                 const next = applyRoot()
                 log(`设置页：库位置改为 ${next}`)
               }
-              return sendJson(res, 200, { ok: true, config: cfg, ...statusView() })
+              // 上下文压缩是**写 profile** 的操作：备份 + 校验 + 失败还原都在 syncCompaction 里
+              let sync = null
+              if (patch.ctx) {
+                sync = syncCompaction({
+                  profileDir: profileDirs()[0], enabled: cfg.ctx.enabled,
+                  thresholdRatio: cfg.ctx.thresholdRatio, retainRatio: cfg.ctx.retainRatio, log,
+                })
+                if (!sync.ok) log(`设置页：压缩配置没改成功 —— ${sync.error}`)
+                else if (sync.changed) log('设置页：压缩配置已更新（需要热重载/重启才生效）')
+              }
+              return sendJson(res, 200, { ok: true, config: cfg, sync, ...statusView() })
             }
             if (req.method === 'POST' && path === '/api/feiyu-kb/index') {
               const meta = rebuildIndex(root)
@@ -451,8 +473,21 @@ export function apply(ctx, config) {
     mountRoutes(typeof ctx.get === 'function' ? ctx.get('webServer') : undefined, ctx)
   }
 
+  /* ─────────────── 上下文压缩调参（设置页开关） ─────────────── */
+  // 打开时：把 profile 的 patch 写一块「thresholdRatio / retainRatio」覆盖（备份 + 校验 + 失败还原）。
+  // 关着时：确认那块不存在（用户自己手写的行一个字不碰）。
+  try {
+    const r = syncCompaction({
+      profileDir: profileDirs()[0], enabled: cfg.ctx.enabled,
+      thresholdRatio: cfg.ctx.thresholdRatio, retainRatio: cfg.ctx.retainRatio, log,
+    })
+    if (!r.ok) log(`压缩配置同步失败：${r.error}`)
+    else if (r.changed) log('压缩配置已按设置同步（需热重载/重启生效）')
+  } catch (e) {
+    log(`压缩配置同步没跑成：${e?.message ?? e}`)
+  }
+
   /* ─────────────── 异常自动体检（看门狗） ─────────────── */
-  // 2026-10-28 使用者要求：DSH 一出现异常就自动跑体检。
   // 启动 3 秒后先查一遍崩溃日志（补报"上次起不来"），之后每 5 分钟扫一次新崩溃 / profile 被回滚。
   try {
     const wd = startWatchdog({

@@ -126,6 +126,18 @@ window.__ModuleLoader__.load({
         } catch (e) { say('体检失败：' + e.message, 'warn') } finally { setBusy('') }
       }
 
+      /** 改压缩配置（开关 / 阈值 / 保留比例）—— 宿主会写 profile 的 patch（带备份+校验） */
+      const saveCtx = async (body, label) => {
+        setBusy('ctx')
+        try {
+          const r = await jpost('/config', { ctx: body })
+          setSt(r)
+          if (r.sync && r.sync.ok === false) say((label || '保存') + '失败：' + r.sync.error, 'warn')
+          else if (r.sync && r.sync.changed) say((label || '已保存') + ' —— 重启（或等热重载）后生效', 'good')
+          else say((label || '已保存') + '（配置没变化）', 'good')
+        } catch (e) { say('保存失败：' + e.message, 'warn') } finally { setBusy('') }
+      }
+
       if (err && !st) {
         return h('div', { 'data-fk-page': '' },
           h('div', { 'data-fk-sec': '' },
@@ -135,8 +147,44 @@ window.__ModuleLoader__.load({
       }
 
       const tools = (st && st.tools) || { ingest: true, capture: true }
+      const ctx = (st && st.ctx) || { enabled: false, thresholdRatio: 0.6, retainRatio: 0.12 }
+      const ctxApplied = (st && st.ctxApplied) || { applied: false }
 
       return h('div', { 'data-fk-page': '' },
+        // ── 上下文压缩（会话跑得久一点） ──
+        h('div', { 'data-fk-sec': '' },
+          h('div', { 'data-fk-h': '' }, '上下文压缩'),
+          h('div', { 'data-fk-switch-row': '' },
+            h('button', {
+              'data-fk-sw': '', 'data-on': ctx.enabled ? '' : undefined,
+              'aria-pressed': ctx.enabled ? 'true' : 'false', disabled: busy === 'ctx',
+              onClick: () => saveCtx({ enabled: !ctx.enabled }, ctx.enabled ? '已关闭压缩调参' : '已开启压缩调参'),
+            }),
+            h('div', { 'data-fk-switch-text': '' },
+              h('div', { 'data-fk-label': '' }, '提前触发压缩（中文会话更省）'),
+              h('div', { 'data-fk-note': '' },
+                'DSH 的 token 估算按「4 字符 ≈ 1 token」，对中文偏低 ⇒ 显示 60% 时实际可能已 70%。'
+                + '把阈值从默认 0.8 调到 0.6，会话能撑更久；代价是更早丢细节（可用 /compact 主动压）。'))),
+          ctx.enabled ? h('div', { 'data-fk-row': '' },
+            h('span', { 'data-fk-note': '' }, '压缩阈值'),
+            h('input', {
+              'data-fk-input': '', style: { maxWidth: '90px' }, value: String(ctx.thresholdRatio),
+              onChange: (e) => setSt({ ...st, ctx: { ...ctx, thresholdRatio: e.target.value } }),
+            }),
+            h('span', { 'data-fk-note': '' }, '保留比例'),
+            h('input', {
+              'data-fk-input': '', style: { maxWidth: '90px' }, value: String(ctx.retainRatio),
+              onChange: (e) => setSt({ ...st, ctx: { ...ctx, retainRatio: e.target.value } }),
+            }),
+            h('button', {
+              'data-fk-btn': '', disabled: busy === 'ctx',
+              onClick: () => saveCtx({ thresholdRatio: Number(ctx.thresholdRatio), retainRatio: Number(ctx.retainRatio) }, '已保存阈值'),
+            }, '保存')) : null,
+          h('div', { 'data-fk-kv': '' },
+            ctxApplied.applied
+              ? `已写入 profile：阈值 ${ctxApplied.thresholdRatio} / 保留 ${ctxApplied.retainRatio}（改完需重启或等热重载）`
+              : '当前是 DSH 默认（0.8 / 0.16），没动过你的配置'),
+          h('div', { 'data-fk-note': '' }, '开关会改 profile 的 cordis.patch.yml（只加一段带标记的配置，改前自动备份、写后校验，不合法会自动还原）。')),
         // ── 存放位置 ──
         h('div', { 'data-fk-sec': '' },
           h('div', { 'data-fk-h': '' }, '知识库文件夹'),
