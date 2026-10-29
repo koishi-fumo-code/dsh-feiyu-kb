@@ -144,17 +144,15 @@ DSH 的 token 计量按 **「4 字符 ≈ 1 token」**估算，官方文档写�
 
 **A. 让那一轮自己归档（推荐）**
 
-把这份约定放到刷视频插件的会话工作目录 `~/.dsh/whale-work/AGENTS.md`，DSH 每轮会注入给被唤醒的 agent：
+把 [`examples/whale-work-AGENTS.md`](examples/whale-work-AGENTS.md) 复制到刷视频插件的会话工作目录 `~/.dsh/whale-work/AGENTS.md`，DSH 每轮会注入给被唤醒的 agent。
 
-```markdown
-# 刷视频这一轮的额外约定
-1) 每轮挑中有知识含量的视频后，调用 kb_add 归档：title / bvid / up / tags / summary / points；
-   要点必须是字幕里真读到的，读不到就只写 summary。归档完再调 kb_related 看看库里的旧笔记。
-2) 每轮结束（不管归档成没成）往 notes/YYYY-MM-DD.md 追加三五行：
-   一级标题 + 一句结论 + 最多 3 条要点。同一 天追加到同一个文件。
-```
+它做三件事：
 
-第 2 条是给 B 留的**落盘锚点** —— 没有它，B 在默认目录里会一个 `.md` 都扫不到（见下）。
+1. 挑中有价值的视频后调 `kb_add` 归档（要点必须读自字幕，读不到就只写一句话）；
+2. 归档完调 `kb_related`，把库里的同主题旧笔记翻出来；
+3. 每轮结束（不管归档成没成）往 `notes/YYYY-MM-DD.md` 追加三五行 —— 给 B 留的**落盘锚点**。
+
+里面还写了**口味规则**：优先 `preferences.like` 里的内容；纯成果展示（手工/绘画/模型）只有读到可复用的方法才收；纯搬运/标题党/吃瓜一律不收；每轮 0~3 条，宁缺勿滥。
 
 这是**指令注入**，不碰插件代码、不改人设 —— 而且它唤醒的 agent 本来就能调 `kb_add`。
 
