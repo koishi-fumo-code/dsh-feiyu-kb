@@ -58,6 +58,7 @@
     "preflight": "node scripts/preflight.mjs",
     "test": "node scripts/selftest.mjs",
     "bench": "node scripts/bench.mjs",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "compose": "node scripts/compose-check.mjs"
   }
 }

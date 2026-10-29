@@ -32,6 +32,7 @@ profile 那边 `dsh.profile.bundles` 登记包名即可；**不要**再把 inser
 ```bash
 node scripts/preflight.mjs                                  # 包清单自洽（秒级）
 node scripts/preflight.mjs --profile ~/.dsh/profiles/desktop # profile 一致性
+node scripts/compose-check.mjs                             # 模拟启动合成：重复 id / 缺 client 出口
 node scripts/selftest.mjs                                   # 38 条功能断言
 node scripts/bench.mjs                                      # 可选：性能没退化
 pnpm pack                                                   # 出 tgz
