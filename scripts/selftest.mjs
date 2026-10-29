@@ -166,6 +166,10 @@ ok(sy1.imported.length === 1, '目录同步收进 1 篇', sy1.imported.length)
 ok(!JSON.stringify(sy1.imported).includes('AGENTS'), 'AGENTS.md 被跳过', sy1.imported.map((x) => x.title))
 const sy2 = syncMod.syncDirs({ root, dirs: [srcDir] })
 ok(sy2.imported.length === 0, '再同步不重复收', sy2.imported.length)
+// 空转可见性：状态里要能看到"上次跑了、扫了几个、收了几个"
+const st1 = syncMod.syncStatus([srcDir])
+ok(Boolean(st1.lastRun), '状态里记了上次同步时间', st1.lastRun)
+ok(st1.lastScanned >= 1 && st1.lastImported === 0, '状态里能看到"扫到 N、收 0"', { scanned: st1.lastScanned, imported: st1.lastImported })
 
 console.log(`\n${pass} 通过 / ${fail} 失败`)
 if (oldDshHome === undefined) delete process.env.DSH_HOME

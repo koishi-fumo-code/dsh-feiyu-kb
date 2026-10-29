@@ -274,6 +274,16 @@ window.__ModuleLoader__.load({
               'data-fk-btn': '', disabled: busy === 'sync',
               onClick: () => saveSync({ dirs: (sync.dirs || []) }, '已保存目录'),
             }, '保存')),
+          syncState.lastRun
+            ? h('div', { 'data-fk-kv': '' },
+              `上次同步：${new Date(syncState.lastRun).toLocaleString()} · 扫了 ${syncState.lastScanned || 0} 个文件 · 收 ${syncState.lastImported || 0} 篇`
+              + ((syncState.lastTitles && syncState.lastTitles.length) ? `（${syncState.lastTitles.join('、')}）` : ''))
+            : null,
+          (syncState.lastRun && !syncState.lastScanned)
+            ? h('div', { 'data-fk-note': '', 'data-warn': '' },
+              '⚠️ 上一轮一个 .md 都没扫到 —— 这些目录里还没有笔记文件。'
+              + '要么让上游往这里写（会话工作目录 AGENTS.md 里的 notes/ 约定），要么把目录改成它真实落盘的位置。')
+            : null,
           syncState.dirs && syncState.dirs.length
             ? h('div', { 'data-fk-kv': '' }, syncState.dirs.map((d) => `${d.exists ? '✓' : '✗'} ${d.dir}`).join('   '))
             : null),
