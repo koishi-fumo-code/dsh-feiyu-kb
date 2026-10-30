@@ -615,7 +615,6 @@ export function apply(ctx, config) {
       materializePersona({ personaText, digestText, home: dshHomeDir() })
     } catch { /* 生成失败不影响主流程 */ }
   }
-  rematerialize()
 
   const chatPersona = () => {
     const cfgPersona = (() => { try { return JSON.parse(readFileSync(configPath(), 'utf8')).brain?.persona || '' } catch { return '' } })()
@@ -635,6 +634,8 @@ export function apply(ctx, config) {
     return ''
   }
 
+  // 等 chatPersona 定义好再调（早调会踩 TDZ，异常被 catch 吞掉、生成不出来）
+  rematerialize()
   /**
    * 投一个问题、跟一段历史、攒出她的回答。
    *
