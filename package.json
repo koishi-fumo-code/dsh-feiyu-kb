@@ -1,6 +1,6 @@
 {
   "name": "dsh-feiyu-kb",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "DSH 插件：大肥鱼的大脑 —— 知识库 + 记忆库 + QQ 通道端点 + 设置页与输入框开关；附带 AstrBot 转发桥源码",
   "type": "module",
   "main": "index.js",
@@ -66,6 +66,7 @@
     "verify:brain": "node scripts/verify-p4.mjs",
     "verify:observe": "node scripts/verify-p5.mjs",
     "rollback": "node scripts/rollback-merge.mjs",
-    "bridge:install": "node scripts/install-bridge.mjs"
+    "bridge:install": "node scripts/install-bridge.mjs",
+    "peers": "node scripts/install-peers.mjs"
   }
 }

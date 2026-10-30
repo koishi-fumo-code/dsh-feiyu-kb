@@ -125,3 +125,16 @@ log('\n完成。')
 log(`  现在就能用：node "${join(pluginDir, 'lib', 'kb-cli.mjs')}" status`)
 log('  插件库可见 / 工具回到会话里：**重启一次 GUI**（bundles 是启动时组合的）')
 log('  卸载：插件库里点「卸载」即可 —— 包、依赖、bundles、入口全在包里，不会有残留行')
+
+// ── 顺手把两条通道的搭档也装上（--no-peers 可跳过）──────────────────────
+if (!argv.includes('--no-peers')) {
+  const extra = [join(here, 'install-peers.mjs')]
+  if (dry) extra.push('--dry')
+  if (argv.includes('--no-network')) extra.push('--no-network')
+  const pIdx2 = argv.indexOf('--profiles')
+  if (pIdx2 >= 0) extra.push('--profiles', String(argv[pIdx2 + 1] || ''))
+  const { spawnSync } = await import('node:child_process')
+  spawnSync(process.execPath, extra, { stdio: 'inherit' })
+} else {
+  log('\n（--no-peers：没装搭档插件；之后可单独跑 node scripts/install-peers.mjs）')
+}
