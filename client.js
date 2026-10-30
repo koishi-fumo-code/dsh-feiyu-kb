@@ -301,6 +301,17 @@ window.__ModuleLoader__.load({
       )
     }
 
+    // 输入框下方的小开关（composer dock，靠右对齐到权限选择器那一侧）
+    const TOGGLE_CSS = `
+[data-fk-mem-toggle]{display:inline-flex;align-items:center;gap:6px;margin-left:auto;
+  padding:2px 10px;border-radius:999px;font-size:12px;line-height:20px;cursor:pointer;user-select:none;
+  border:1px solid var(--dsw-alias-border-default,rgba(127,127,127,.35));color:inherit;opacity:.8;}
+[data-fk-mem-toggle]:hover{opacity:1;}
+[data-fk-mem-dot]{width:8px;height:8px;border-radius:50%;background:rgba(127,127,127,.45);flex:none;}
+[data-fk-mem-toggle][data-on] [data-fk-mem-dot]{background:#22c55e;}
+[data-fk-mem-toggle][data-on]{opacity:.95;}
+`
+
     return {
       inject: ['slots'],
       apply(ctx) {
@@ -318,6 +329,56 @@ window.__ModuleLoader__.load({
             () => h(Panel),
           ))
         } catch (e) { /* 没有这个槽位就算了，别把设置页整挂 */ }
+
+        // 输入框下面的「全局记忆」开关
+        try {
+          const style2 = document.createElement('style')
+          style2.setAttribute('data-plugin-css', 'dsh-feiyu-kb-toggle')
+          style2.textContent = TOGGLE_CSS
+          document.head.appendChild(style2)
+          ctx.effect(() => () => style2.remove(), 'dsh-feiyu-kb: 记忆开关样式')
+
+          function MemToggle(props) {
+            const sessionId = String((props && props.sessionId) || '')
+            const [off, setOff] = useState(null)
+            useEffect(() => {
+              let alive = true
+              jget('/config')
+                .then((d) => {
+                  if (!alive) return
+                  const list = (d && d.config && d.config.memory && Array.isArray(d.config.memory.sessionOff))
+                    ? d.config.memory.sessionOff : []
+                  setOff(sessionId ? list.includes(sessionId) : false)
+                })
+                .catch(() => { if (alive) setOff(false) })
+              return () => { alive = false }
+            }, [sessionId])
+            const flip = useCallback(async () => {
+              if (!sessionId) return
+              const next = !off
+              setOff(next)
+              try {
+                const r = await jpost('/memory/session', { sessionId, off: next })
+                setOff(Boolean(r && r.off))
+              } catch { setOff(!next) }
+            }, [off, sessionId])
+            return h('div', {
+              'data-fk-mem-toggle': '',
+              'data-on': off === false ? '' : undefined,
+              onClick: flip,
+              title: off ? '本会话不用全局记忆（QQ / B站 不受影响）' : '本会话使用全局记忆（点一下关掉）',
+            }, h('span', { 'data-fk-mem-dot': '' }), h('span', null,
+              off === null ? '记忆…' : off ? '本会话记忆 关' : '本会话记忆 开'))
+          }
+
+          slots.inject('conversation.composer.dock', () => slots.register(
+            {
+              name: 'conversation.composer.dock', id: 'feiyu-memory', order: 90, label: '本会话记忆',
+              inject: (sessionId) => ({ sessionId }),
+            },
+            MemToggle,
+          ))
+        } catch (e) { /* 这个槽位不存在就算了，不影响主功能 */ }
       },
     }
   },

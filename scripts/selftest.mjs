@@ -21,10 +21,18 @@ const root = mkdtempSync(join(tmpdir(), 'feiyu-kb-test-'))
 //    不隔离的话自测会连上使用者真实的 feiyu-kb.config.json ⇒ 把测试条目写进真库（2026-10-28 踩过）
 const oldDshHome = process.env.DSH_HOME
 process.env.DSH_HOME = join(root, '.dsh-home')
+// 记忆库也要隔离：默认根在 D 盘真目录，不隔离会把测试记忆写进去
+const oldMemRoot = process.env.FEIYU_MEMORY_ROOT
+process.env.FEIYU_MEMORY_ROOT = join(root, 'memory')
 const mod = await import(pathToFileURL(resolve(here, '..', 'index.js')).href)
 
 const tools = new Map()
-const ctx = { tools: { register: (spec) => { tools.set(spec.name, spec); return spec } } }
+const sessionHandlers = []
+const ctx = {
+  tools: { register: (spec) => { tools.set(spec.name, spec); return spec } },
+  // 记忆记录器订阅 session/event，这里捕获它好喂事件
+  on: (name, fn) => { if (name === 'session/event') sessionHandlers.push(fn); return () => {} },
+}
 mod.apply(ctx, { root })
 
 let pass = 0
@@ -171,7 +179,66 @@ const st1 = syncMod.syncStatus([srcDir])
 ok(Boolean(st1.lastRun), '状态里记了上次同步时间', st1.lastRun)
 ok(st1.lastScanned >= 1 && st1.lastImported === 0, '状态里能看到"扫到 N、收 0"', { scanned: st1.lastScanned, imported: st1.lastImported })
 
+// 带 .private 标记的目录整体跳过：记忆库那种私密数据不该被当知识收进库
+const privParent = mkdtempSync(join(tmpdir(), 'feiyu-priv-'))
+const privDir = join(privParent, 'private-mem')
+mkdirSync(privDir, { recursive: true })
+writeFileSync(join(privDir, '.private'), 'PRIVATE\n', 'utf8')
+writeFileSync(join(privDir, 'secret.md'), '# 私聊\n\n狗修鲸说他下周三要出差三天，这条不该进知识库。\n'.repeat(2), 'utf8')
+const sy3 = syncMod.syncDirs({ root, dirs: [privParent] })
+ok(sy3.imported.length === 0, '带 .private 的目录不被同步（私密数据不进知识库）', sy3.imported.map((x) => x.title))
+rmSync(privParent, { recursive: true, force: true })
+
+// 文件级私密：名字带 private / 有同名 .private 标记文件
+const privFiles = mkdtempSync(join(tmpdir(), 'feiyu-privf-'))
+writeFileSync(join(privFiles, 'whale-diary-private.md'), '# 私密日记\n\n今天主人说了很多私人的事，这些不该进知识库。\n'.repeat(2), 'utf8')
+writeFileSync(join(privFiles, 'normal.md'), '# 普通笔记\n\n这条讲的是 DSH 插件的加载顺序，可以公开。\n'.repeat(2), 'utf8')
+writeFileSync(join(privFiles, 'secret2.md'), '# 另一条\n\n这条有同名 .private 标记，也不该进库。\n'.repeat(2), 'utf8')
+writeFileSync(join(privFiles, 'secret2.md.private'), 'PRIVATE\n', 'utf8')
+const sy4 = syncMod.syncDirs({ root, dirs: [privFiles] })
+ok(sy4.imported.length === 1, '文件级私密标记生效（只收 normal.md）', sy4.imported.map((x) => x.title))
+rmSync(privFiles, { recursive: true, force: true })
+
+// ── 记忆库（和知识库分开的另一本账）──
+const memTools = ['mem_add', 'mem_search', 'mem_read', 'mem_status']
+ok(memTools.every((n) => tools.has(n)), '4 只记忆工具都注册了')
+
+const kbBefore = (await tools.get('kb_status').execute({})).entries
+const memAdd = await tools.get('mem_add').execute({ text: '狗修鲸说他下周三出差三天。', kind: '事件', who: '狗修鲸', tags: '日程', importance: 3 })
+ok(memAdd.ok === true && Boolean(memAdd.id), 'mem_add 写进去了', memAdd)
+const memHit = await tools.get('mem_search').execute({ query: '出差' })
+ok(memHit.ok === true && memHit.memories.length === 1, 'mem_search 搜得到', memHit.memories?.length)
+const memReadRes = await tools.get('mem_read').execute({ id: memAdd.id })
+ok(memReadRes.ok === true && String(memReadRes.text).includes('出差'), 'mem_read 读得回', memReadRes.ok)
+const memStat = await tools.get('mem_status').execute({})
+ok(memStat.ok === true && memStat.memories === 1, 'mem_status 统计对', memStat.memories)
+const kbAfter = (await tools.get('kb_status').execute({})).entries
+ok(kbAfter === kbBefore, '记忆没写进知识库（两本账分开了）', { kbBefore, kbAfter })
+
+// 全局记忆记录器：订阅会话事件 → 写进记忆库（QQ / B站 / DSH 共用同一条路径）
+const memRootDir = process.env.FEIYU_MEMORY_ROOT
+const todayKey = (() => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` })()
+const chatPath = join(memRootDir, 'chats', `${todayKey}.md`)
+const fire = (id, ev) => { for (const fn of sessionHandlers) fn({ header: { id } }, ev) }
+ok(sessionHandlers.length > 0, '记忆记录器订阅了 session/event')
+fire('dsh-feiyu', { type: 'user/message', time: Date.now(), data: { source: { kind: 'user' }, content: [{ type: 'text', text: '［她的人设］…\n\n［用户消息］\n你好呀' }] } })
+fire('dsh-feiyu', { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'SECRET-REASONING' }, { type: 'text', text: '在呢喵。' }] } } })
+fire('dsh-feiyu', { type: 'turn/end', data: {} })
+const chatText = readFileSync(chatPath, 'utf8')
+ok(chatText.includes('你好呀') && chatText.includes('在呢喵'), '会话事件被记进记忆库')
+ok(!chatText.includes('SECRET-REASONING'), 'reasoning 不写进记忆')
+ok(chatText.includes('qq'), '来源标成 qq')
+const lenAfterQQ = chatText.length
+fire('other-session', { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '不该记的' }] } })
+fire('other-session', { type: 'turn/end', data: {} })
+ok(readFileSync(chatPath, 'utf8').length === lenAfterQQ, '别的会话不写进鲸鲸的记忆')
+fire('dsh-feiyu', { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Time sampled while preparing turn 1' }] } })
+fire('dsh-feiyu', { type: 'turn/end', data: {} })
+ok(readFileSync(chatPath, 'utf8').length === lenAfterQQ, '系统提示不写进记忆')
+
 console.log(`\n${pass} 通过 / ${fail} 失败`)
+if (oldMemRoot === undefined) delete process.env.FEIYU_MEMORY_ROOT
+else process.env.FEIYU_MEMORY_ROOT = oldMemRoot
 if (oldDshHome === undefined) delete process.env.DSH_HOME
 else process.env.DSH_HOME = oldDshHome
 rmSync(srcDir, { recursive: true, force: true })

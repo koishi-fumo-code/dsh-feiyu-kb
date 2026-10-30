@@ -32,6 +32,10 @@ import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS, DEFAULT_CTX, DEFAULT
 import { syncCompaction, compactionStatus } from './lib/ctx-save.mjs'
 import { syncDirs, syncStatus, DEFAULT_SYNC_DIRS } from './lib/sync-dirs.mjs'
 import { startWatchdog, runDiagnosis, lastWatchdogState } from './lib/watchdog.mjs'
+import {
+  resolveMemoryRoot, writeMemory, searchMemories, searchChats, readMemory,
+  memoryStatus, appendChat, recentMemories, rebuildMemoryIndex, writeDigest,
+} from './lib/memory.mjs'
 
 export const name = 'feiyu-kb'
 // ⚠️ 只 inject tools：webServer 在 headless profile 里可能没有，
@@ -206,6 +210,7 @@ export function apply(ctx, config) {
       excerpt: { type: 'string', description: '原文摘录' },
       notes: { type: 'string', description: '备注' },
       source: { type: 'string', description: '来源' },
+      origin: { type: 'string', description: '来源渠道：b站|qq|dsh' },
     },
     async execute(args) {
       try {
@@ -339,6 +344,154 @@ export function apply(ctx, config) {
       }
     },
   })
+  /* ─────────────── 记忆库（和知识库分开的另一本账） ───────────────
+   * 知识库 = 「那期视频讲了什么」，查档案；
+   * 记忆库 = 「你上次跟我说过什么」，记人和事。
+   * 存储见 lib/memory.mjs；原始对话流水由 /api/feiyu-chat 自动追加，不靠模型动手。
+   */
+  // 环境变量优先：selftest 靠它把记忆库也隔离到临时目录（否则会写进真库）
+  const memRoot = () => process.env.FEIYU_MEMORY_ROOT || resolveMemoryRoot(cfg.memory?.root)
+  const memOn = () => cfg.memory?.enabled !== false
+
+  tool({
+    name: 'mem_add',
+    description: '记下值得记住的事（对方说过什么、约定、偏好、重要事件）。这是「记忆」不是「知识」；视频知识才用 kb_add。',
+    parameters: {
+      text: { type: 'string', description: '要记住的内容（一两句话，别写流水账）' },
+      title: { type: 'string', description: '短标题，默认取第一行' },
+      kind: { type: 'string', description: '对话|偏好|约定|事件|人物' },
+      who: { type: 'string', description: '跟谁有关' },
+      tags: { type: 'string', description: '逗号分隔，最多 8 个' },
+      importance: { type: 'number', description: '1~3，默认 2' },
+    },
+    async execute(args) {
+      if (!memOn()) return { ok: false, error: '记忆库已在配置里关闭' }
+      try {
+        const r = writeMemory(memRoot(), args)
+        try { rebuildMemoryIndex(memRoot()) } catch { /* 索引坏了不影响正文 */ }
+        try { writeDigest(memRoot()) } catch { /* 摘要只是给别的通道用，失败无妨 */ }
+        log(`mem_add ${r.id}`)
+        return { ok: true, ...r }
+      } catch (err) {
+        return { ok: false, error: String(err?.message ?? err) }
+      }
+    },
+  })
+
+  tool({
+    name: 'mem_search',
+    description: '搜记忆：说过的话、约定、偏好、旧对话。关键词用空格分开（全部命中才算）。',
+    parameters: {
+      query: { type: 'string', description: '关键词，空格分隔' },
+      tags: { type: 'string', description: '标签过滤' },
+      limit: { type: 'number', description: '条数，默认 5' },
+      chats: { type: 'boolean', description: '是否也搜原始对话流水（默认 true）' },
+    },
+    async execute(args) {
+      if (!memOn()) return { ok: false, error: '记忆库已关闭' }
+      try {
+        const limit = Math.min(20, Math.max(1, Number(args.limit) || 5))
+        const mems = searchMemories(memRoot(), { query: args.query || '', tags: args.tags || [], limit })
+        const chats = args.chats === false ? [] : searchChats(memRoot(), { query: args.query || '', limit: 3 })
+        return {
+          ok: true,
+          memories: mems.map((m) => ({
+            id: m.meta.id, date: m.meta.date, time: m.meta.time, kind: m.meta.kind,
+            title: m.meta.title, tags: m.meta.tags,
+            text: m.body.replace(/^#.*$/m, '').trim().slice(0, 400),
+          })),
+          chats,
+          total: mems.length + chats.length,
+        }
+      } catch (err) {
+        return { ok: false, error: String(err?.message ?? err) }
+      }
+    },
+  })
+
+  tool({
+    name: 'mem_read',
+    description: '按 id 读一条完整记忆。',
+    parameters: { id: { type: 'string', description: '记忆 id' } },
+    async execute(args) {
+      const hit = readMemory(memRoot(), args.id)
+      return hit ? { ok: true, id: hit.meta.id, meta: hit.meta, text: hit.body } : { ok: false, error: '没这条记忆' }
+    },
+  })
+
+  tool({
+    name: 'mem_status',
+    description: '记忆库概况：多少条、最近一条、对话流水天数。',
+    parameters: {},
+    async execute() {
+      try { return { ok: true, ...memoryStatus(memRoot()), enabled: memOn() } }
+      catch (err) { return { ok: false, error: String(err?.message ?? err) } }
+    },
+  })
+
+  /* ─────────────── 全局记忆记录器：三个通道都进同一本账 ───────────────
+   * 不在各通道分别写，而是订阅会话事件：QQ 走 /api/feiyu-chat、B站 走生物钟投递、
+   * DSH 直接聊 —— 最后都会落进同一个 dsh-feiyu 会话。记在会话上，等于全记了。
+   */
+  try { writeDigest(memRoot()) } catch { /* 摘要失败无妨 */ }
+  const BRAIN_SESSION = 'dsh-feiyu'
+  if (typeof ctx.on === 'function' && cfg.memory?.enabled !== false) {
+    const pend = new Map()
+    const cleanUser = (t) => {
+      const s = String(t || '')
+      const i = s.lastIndexOf('［用户消息］')
+      if (i >= 0) return { text: s.slice(i + '［用户消息］'.length).trim(), src: 'qq' }
+      if (s.includes('【生物钟】')) {
+        const line = (s.match(/【生物钟】[^\n]*/) || [''])[0].replace('【生物钟】', '').trim()
+        return { text: '【B站轮次】' + line, src: 'bili' }
+      }
+      if (/Time sampled|system-reminder/.test(s)) return null
+      return { text: s.trim(), src: 'dsh' }
+    }
+    try {
+      const dispose = ctx.on('session/event', (session, event) => {
+        try {
+          if (cfg.memory?.enabled === false) return
+          const sid = String(session?.header?.id ?? session?.id ?? '')
+          if (sid !== BRAIN_SESSION) return
+          const type = event?.type
+          if (type === 'user/message' && event?.data?.source?.kind === 'user') {
+            const parts = (event.data.content || []).map((b) => (b && b.type === 'text' ? b.text : '')).join('\n')
+            const cleaned = cleanUser(parts)
+            if (!cleaned || !cleaned.text) return
+            // 按会话关闭：只对 DSH 侧生效 —— QQ / B站 两条通道始终记录
+            const off = Array.isArray(cfg.memory?.sessionOff) ? cfg.memory.sessionOff : []
+            if (off.includes(sid) && cleaned.src !== 'qq' && cleaned.src !== 'bili') return
+            pend.set(sid, { ...cleaned, at: event.time || Date.now(), reply: '' })
+            return
+          }
+          if (type === 'assistant/message') {
+            const p = pend.get(sid)
+            if (!p) return
+            const t = (event?.data?.message?.content || [])
+              .filter((b) => b && b.type === 'text' && b.text).map((b) => b.text).join('')
+            if (t) p.reply = p.reply ? p.reply + '\n' + t : t
+            return
+          }
+          if (type === 'turn/end') {
+            const p = pend.get(sid)
+            if (!p) return
+            pend.delete(sid)
+            if (!p.text && !p.reply) return
+            appendChat(memRoot(), {
+              user: p.text, reply: p.reply, source: p.src, at: p.at,
+              who: p.src === 'qq' ? '狗修鲸' : '',
+            })
+          }
+        } catch { /* 记不上不影响对话 */ }
+      })
+      try { ctx.effect(() => () => { try { dispose?.() } catch { /* 忽略 */ } }, 'feiyu-kb: 记忆记录器') } catch { /* 没有 effect 就常驻 */ }
+      log(`记忆记录器已挂上（会话 ${BRAIN_SESSION}）`)
+    } catch (e) {
+      log(`记忆记录器没起来：${e?.message ?? e}`)
+    }
+  }
+
   /* ─────────────── 设置页用的 HTTP 接口（可选：没有 webServer 就跳过） ─────────────── */
   /**
    * 只接本机同源请求 —— 别的网页在浏览器里也能打到 127.0.0.1，
@@ -391,6 +544,198 @@ export function apply(ctx, config) {
     }
   }
 
+  /* ─────────────── /api/feiyu-chat：QQ 通道 → 唯一大脑 ───────────────
+   * 2026-10-30（合并三条鱼 · P3）。三条实测结论决定了写法：
+   *   R2 —— `prompt()` 只回 `{ accepted: true }`，**拿不到回复文本**。
+   *   ⚠️ 别用 `page({throughSeq:-1})` 取尾部：源码 `end = min(-1+1, …) = 0` ⇒ 永远空页（踩过）。
+   *      正确姿势是 `follow()`：先给 `{ type:'snapshot', cursor, records }`，
+   *      之后按 seq 推 `{ type:'event', event }`；assistant 正文在
+   *      `event.type==='assistant/message'` 的 `event.message.content[*].text`。
+   *   会话不存在时 `follow`/`prompt` 都 SESSION_NOT_FOUND ⇒ 必须先 `create()`。
+   *   R3 —— 同一会话串行（writer lock + `session/agent-busy`）⇒ 忙时必须降级回话。
+   */
+  // 生产默认 120s；测试可用 FEIYU_CHAT_TIMEOUT_MS 缩短
+  const CHAT_TIMEOUT_MS = Number(process.env.FEIYU_CHAT_TIMEOUT_MS) || 120_000
+  // 大脑会话的工作目录。**每次现读配置**，换目录不用重启 DSH。
+  //   优先级：feiyu-kb.config.json 的 brainCwd > 环境变量 > 默认（D 盘工作区里的独立子目录）
+  //   放独立子目录而不是工作区根：根目录的 AGENTS.md 是施工约定，会被注入成人格，跟人设打架。
+  const chatCwd = () => {
+    try {
+      const c = JSON.parse(readFileSync(configPath(), 'utf8'))
+      if (typeof c.brainCwd === 'string' && c.brainCwd.trim()) return c.brainCwd.trim()
+    } catch { /* 读不到就用默认 */ }
+    return process.env.FEIYU_BRAIN_CWD || 'D:\\dsh工作区\\feiyu-brain'
+  }
+  const CHAT_BUSY_TEXT = '我在忙，等我一下喵……'
+
+  /**
+   * 从一条事件里抠出她的回答正文。
+   * ⚠️ 实测事件形状是 `{ type, seq, time, data:{ turn, step, message } }` —— 正文在 `data.message`；
+   *    且 content 里混着 `reasoning` / `tool-call`，**只认 `type==='text'`**（否则会把内心独白发给用户）。
+   */
+  const chatTextOf = (event) => {
+    const message = event?.data?.message ?? event?.message ?? event
+    if (!message) return ''
+    if (typeof message === 'string') return message
+    const blocks = Array.isArray(message.content) ? message.content : []
+    return blocks
+      .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+      .map((b) => b.text)
+      .join('')
+  }
+
+  /** 读唯一人设源。插件跑在宿主进程里，不受会话沙箱限制，能读到 D: 上的 whale.md */
+  const chatPersona = () => {
+    const candidates = [
+      process.env.FEIYU_PERSONA_FILE,
+      join('D:', 'dsh工作区', 'persona', 'whale.md'),
+      join(process.env.USERPROFILE || process.env.HOME || '.', '.bili-ai', 'persona.md'),
+    ].filter(Boolean)
+    for (const p of candidates) {
+      try {
+        const t = readFileSync(p, 'utf8').trim()
+        if (t) return t
+      } catch { /* 试下一个 */ }
+    }
+    return ''
+  }
+
+  /**
+   * 投一个问题、跟一段历史、攒出她的回答。
+   *
+   * ⚠️ 2026-10-30 实测踩坑：两个请求并发时**都拿到了同一条回复**（B 回了 A 的答案）。
+   *    根因是大家共用"看到 assistant/message 就收"的策略。现在改成：
+   *      ① 先 follow 拿 snapshot → 再 prompt（带唯一 requestId）
+   *      ② 在事件流里**认领** `user/message` 中 rpcId 等于自己 requestId 的那条
+   *      ③ 等它之后第一个 `turn/start`，**锁死自己的 turn 号**
+   *      ④ 只收 `data.turn === 我的 turn` 的 assistant/message，只在这个 turn 的 `turn/end` 收工
+   *    这样并发、排队都不会串台。
+   * @param {() => void} stopStream 看完 turn/end 后主动叫停生成器（否则它会卡在等事件上）
+   */
+  const chatAsk = async (ctl, sessionId, text, signal, stopStream) => {
+    if (typeof ctl.follow !== 'function') throw new Error('sessionController.follow 不可用')
+    const address = { kind: 'session', sessionId }
+    const requestId = `feiyu-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const texts = []
+    let done = false
+    let mineSeen = false
+    let myTurn = null
+    let lastTurn = null
+    let myItemId = null   // 排队里那条消息的 id：超时后用它撤销，避免"幽灵回答"
+    let prompted = false
+    const stream = ctl.follow({ address, maxMessages: 200 }, signal)
+    try {
+      for await (const rec of stream) {
+        if (signal?.aborted) break
+        if (rec?.type === 'snapshot' && !prompted) {
+          prompted = true
+          try {
+            await ctl.prompt({ sessionId, requestId, mode: 'queue', content: [{ type: 'text', text }] }, signal)
+          } catch (e) {
+            stopStream?.()   // 先叫停：否则异常冒泡时 IteratorClose 会一直等生成器
+            throw e
+          }
+          continue
+        }
+        if (rec?.type !== 'event') continue
+        const ev = rec.event
+        if (!ev) continue
+        // ⚠️ 实测顺序：turn/start(seq 4) **早于** user/message(seq 8)。
+        //    所以先记住最近一次 turn/start，等自己的用户消息到了再绑定。
+        if (ev.type === 'turn/start' && typeof ev.data?.turn === 'number') {
+          lastTurn = ev.data.turn
+          if (mineSeen && myTurn === null) myTurn = lastTurn
+          continue
+        }
+        // ② 认领自己那条用户消息 → 绑定到它所属的 turn
+        if (!mineSeen) {
+          if (ev.type === 'user/message' && ev.data?.source?.rpcId === requestId) {
+            mineSeen = true
+            myItemId = ev.data?.id ?? null
+            if (lastTurn !== null) myTurn = lastTurn
+          }
+          continue
+        }
+        // ④ 只收自己这一轮的
+        if (ev.type === 'assistant/message' && ev.data?.turn === myTurn) {
+          const t = chatTextOf(ev)
+          if (t) texts.push(t)
+        } else if (ev.type === 'turn/end' && ev.data?.turn === myTurn) {
+          done = true
+          stopStream?.()   // 先叫停再 break：否则 IteratorClose 会一直等生成器醒来
+          break
+        }
+      }
+    } catch (e) {
+      if (!signal?.aborted) throw e   // 主动叫停/超时导致的 AbortError 不算失败
+    }
+    return { text: texts.join('').trim(), done, myItemId, myTurn }
+  }
+
+  const handleChat = async (req, res, ctxRef) => {
+    if (!sameOriginOk(req)) return sendJson(res, 403, { ok: false, error: '只接受本机同源请求' })
+    if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: '只支持 POST' })
+    let body
+    try { body = await readBody(req) } catch { return sendJson(res, 400, { ok: false, error: '请求体读不出来' }) }
+    const text = String(body?.text ?? '').trim()
+    if (!text) return sendJson(res, 400, { ok: false, error: 'text 不能为空' })
+    const sessionId = String(body?.sessionId ?? 'dsh-feiyu').trim() || 'dsh-feiyu'
+    // 大脑会话 cwd 在 D:/dsh工作区/feiyu-brain（workspace-write 沙箱），读不到 D: 上的人设 ⇒ 由插件注入
+    const persona = chatPersona()
+    // 记忆：把最近几条「值得记住的事」塞进提示，让她张口就知道上次聊到哪
+    const memBlock = (() => {
+      try {
+        if (cfg.memory?.enabled === false) return ''
+        // 注意：QQ/B站 通道默认**总是**引用全局记忆，不受界面开关影响（开关只对会话生效）
+        const n = Number(cfg.memory?.inject ?? 5) || 0
+        if (n <= 0) return ''
+        const recent = recentMemories(memRoot(), n)
+        if (!recent.length) return ''
+        return '［最近的记忆］\n' + recent.map((m) => `· ${m.date} ${m.title}${m.line ? '：' + String(m.line).slice(0, 60) : ''}`).join('\n') + '\n\n'
+      } catch { return '' }
+    })()
+    const payload = `${memBlock}${persona
+      ? `［她的人设］以下是她专属的设定，说话 / 写日记 / 选题都以它为准；与其它说法冲突时以这一份为准：\n${persona}\n\n`
+      : ''}［用户消息］\n${text}`
+
+    // 运行时取控制器：不能写进 inject（headless 可能没有）
+    let ctl
+    for (const c of [ctxRef, ctx]) {
+      try {
+        const v = c?.get?.('sessionController') || c?.sessionController
+        if (v?.prompt) { ctl = v; break }
+      } catch { /* 继续找 */ }
+    }
+    if (!ctl?.prompt) return sendJson(res, 503, { ok: false, error: 'sessionController 不可用' })
+
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), CHAT_TIMEOUT_MS)
+    const started = Date.now()
+    try {
+      // 会话不存在时 follow/prompt 都会 SESSION_NOT_FOUND ⇒ 先 create（已存在则复用）
+      try { await ctl.create?.({ sessionId, cwd: chatCwd() }) } catch { /* 已存在或正被占用 */ }
+      const outcome = await chatAsk(ctl, sessionId, payload, ac.signal, () => ac.abort())
+      // 超时且还没轮到自己 ⇒ 把排队的 prompt 撤掉，别让它事后自己跑出个"幽灵回答"
+      if (!outcome.done && ac.signal.aborted && outcome.myItemId && outcome.myTurn === null && typeof ctl.updateQueue === 'function') {
+        try { await ctl.updateQueue({ sessionId, itemId: outcome.myItemId, action: { kind: 'remove' } }) } catch { /* 已经开跑就撤不掉，正常 */ }
+      }
+      if (!outcome.text) return sendJson(res, 200, { ok: true, busy: !outcome.done, text: outcome.done ? '（她这次没说话）' : CHAT_BUSY_TEXT, sessionId })
+      // 对话流水不在这里写：统一由「全局记忆记录器」在 session/event 上记，避免两条通道重复记一遍
+      return sendJson(res, 200, { ok: true, text: outcome.text, sessionId, ms: Date.now() - started })
+    } catch (e) {
+      const s = String(e?.code ?? '') + ' ' + String(e?.message ?? '')
+      if (/busy/i.test(s)) return sendJson(res, 200, { ok: true, busy: true, text: CHAT_BUSY_TEXT, sessionId })
+      const timedOut = ac.signal.aborted
+      return sendJson(res, 200, {
+        ok: false, busy: timedOut, sessionId,
+        error: timedOut ? '超时' : String(e?.message ?? e),
+        text: timedOut ? CHAT_BUSY_TEXT : undefined,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   const mountRoutes = (ws, hostCtx) => {
     if (!ws?.register) { log('没有 webServer（或没有 register）：设置页接口没挂（工具照常可用）'); return }
     try {
@@ -403,6 +748,17 @@ export function apply(ctx, config) {
           const path = url.pathname
           try {
             if (req.method === 'GET' && path === '/api/feiyu-kb/status') return sendJson(res, 200, statusView())
+            // 输入框下的「全局记忆」开关：按会话记开/关。QQ/B站 两条通道不受它影响。
+            if (req.method === 'POST' && path === '/api/feiyu-kb/memory/session') {
+              const body = await readBody(req)
+              const sid = String(body?.sessionId || '').trim()
+              if (!sid) return sendJson(res, 400, { ok: false, error: 'sessionId 不能为空' })
+              const off = new Set(cfg.memory?.sessionOff || [])
+              if (body?.off === true) off.add(sid)
+              else if (body?.off === false) off.delete(sid)
+              cfg = saveConfig({ memory: { sessionOff: [...off] } })
+              return sendJson(res, 200, { ok: true, sessionId: sid, off: off.has(sid), sessionOff: cfg.memory.sessionOff })
+            }
             if (req.method === 'GET' && path === '/api/feiyu-kb/config') {
               return sendJson(res, 200, { ok: true, config: cfg, root, configPath: configPath(), defaults: { tools: DEFAULT_TOOLS } })
             }
@@ -428,6 +784,13 @@ export function apply(ctx, config) {
                 if (typeof body.sync.enabled === 'boolean') patch.sync.enabled = body.sync.enabled
                 if (Array.isArray(body.sync.dirs)) patch.sync.dirs = body.sync.dirs
                 if (body.sync.intervalMinutes !== undefined) patch.sync.intervalMinutes = body.sync.intervalMinutes
+              }
+              if (body.memory && typeof body.memory === 'object') {
+                patch.memory = {}
+                if (typeof body.memory.enabled === 'boolean') patch.memory.enabled = body.memory.enabled
+                if (typeof body.memory.root === 'string') patch.memory.root = body.memory.root
+                if (body.memory.inject !== undefined) patch.memory.inject = body.memory.inject
+                if (Array.isArray(body.memory.sessionOff)) patch.memory.sessionOff = body.memory.sessionOff
               }
               cfg = saveConfig(patch)
               if (patch.sync) startSync()          // 目录同步改了：重启定时器（立即生效，不用重启）
@@ -469,7 +832,13 @@ export function apply(ctx, config) {
           }
         },
       }), 'feiyu-kb: /api/feiyu-kb 路由')
-      log('设置页接口已挂载：/api/feiyu-kb')
+      // 2026-10-30（合并三条鱼 · P3）：QQ 通道 → 唯一大脑（只本机可调）
+      ;(typeof hostCtx.effect === 'function' ? hostCtx.effect : effect)(() => ws.register({
+        kind: 'prefix',
+        path: '/api/feiyu-chat',
+        handler: (req, res) => handleChat(req, res, hostCtx),
+      }), 'feiyu-kb: /api/feiyu-chat 路由')
+      log('设置页接口已挂载：/api/feiyu-kb · 大脑通道已挂载：/api/feiyu-chat')
     } catch (e) {
       log(`设置页接口没挂上：${e?.message ?? e}`)
     }
@@ -568,3 +937,4 @@ if (process.argv[1] && process.argv[1].endsWith('index.js')) {
   try { console.log(JSON.stringify(describe(), null, 2)) } catch (e) { console.error(e) }
   try { readFileSync(join(DEFAULT_ROOT, 'INDEX.md'), 'utf8') } catch { /* 索引还没建就算了 */ }
 }
+
