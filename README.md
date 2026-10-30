@@ -73,6 +73,21 @@ B站 轮次读 `recent.md` 摘要（由本插件维护），所以刷视频时�
 
 插件里**没有写死的绝对路径**，默认都跟着 `$DSH_HOME`（Windows 上是 `C:\Users\<你>\.dsh`）：
 
+### 装的时候会顺手装上两个搭档
+
+跑 `node scripts/install.mjs`（或插件库里的安装）时，会**自动**把两条通道也配好：
+
+| 搭档 | 类型 | 作用 |
+|---|---|---|
+| `dsh-bili-whale` | DSH 插件 | **B站 通道**：刷视频、挑片、归档进知识库、写日记 |
+| `astrbot_plugin_feiyu_bridge` | AstrBot 插件 | **QQ 通道**：把私聊转发给 DSH 会话 |
+
+- 已经有的跳过，不会重复装
+- 没装 AstrBot 就只跳过 QQ 那段（只用 DSH 的话完全不影响）
+- 只想装本插件：加 `--no-peers`；只想登记不下载：`--no-network`
+
+单独补装：`npm run peers`
+
 | 配置项 | 默认 | 说明 |
 |---|---|---|
 | `kb.root` | `~/dsh-feiyu-kb` | 知识库 |
@@ -281,6 +296,23 @@ ASTRBOT_PLUGINS=<目录> node scripts/install-bridge.mjs
 
 部署后在 AstrBot 里重载插件，QQ 私聊发 `/鲸鲸 on`。它会**自动发现 DSH 端口**（每次重启都变），
 并把每次转发记进 `data/feiyu_bridge.log`。
+
+## QQ 机器人跟着 DSH 起落（可选）
+
+`$DSH_HOME/feiyu-kb.config.json` 里加一段（默认关，本机已开）：
+
+```json
+"qqBot": { "enabled": true, "root": "D:/QQBot", "startDelayMs": 6000, "requireDesktopApp": true }
+```
+
+- **DSH 启动**：6 秒后跑 `D:/QQBot/dsh-bot-lifecycle.ps1 -Mode start` —— `start-all.ps1` 幂等拉起
+  AstrBot + SnowLuma（已经在跑就什么都不做），再由 WMI 拉起独立的守夜进程。
+- **DSH 正常退出**：插件 disposer 调 `-Mode stop`，杀守夜 + 执行 `stop-all.ps1`。
+- **DSH 被强杀/崩溃**：守夜进程由 WMI 创建、不在 DSH 的沙箱 job 里，能活下来；发现 DSH 进程没了，
+  先等 10 秒确认不是重启，再执行 `stop-all.ps1`。
+- **快速重启**：每次启动生成新的 `bootId`，旧守夜看到 bootId 变了会自己退出，不会误杀新一轮的机器人。
+- **QQ 客户端不关**（沿用 `stop-all.ps1` 的既定策略，只停 AstrBot + SnowLuma）。
+- `requireDesktopApp` 为真时只在桌面版 DSH 里生效，headless / 自测宿主不会碰真机器人。
 
 ## 运维脚本
 

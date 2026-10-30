@@ -14,7 +14,7 @@
  *   node scripts/preflight.mjs --profile ~/.dsh/profiles/desktop
  * ============================================================================
  */
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
@@ -72,6 +72,33 @@ if (pkg?.dsh?.client) {
 }
 
 /* ── ③ bundle patch ──────────────────────────────────── */
+// ── ②c 相对 import 必须都有对应文件
+//    2026-10-30 事故：commit 了 index.js（含 import ./lib/qq-bot.mjs），但那个文件没提交
+//    ⇒ 装机即 ERR_MODULE_NOT_FOUND，插件整条不激活（entry did not activate）
+console.log('\n②c 相对 import 解析')
+{
+  const files = [String(pkg.main || "index.js")]
+  try {
+    for (const f of readdirSync(join(PKG_DIR, "lib"))) {
+      if (f.endsWith(".mjs") || f.endsWith(".js")) files.push("lib/" + f)
+    }
+  } catch { /* 没有 lib */ }
+  const bad = []
+  for (const rel of files) {
+    const p = resolve(PKG_DIR, rel)
+    if (!existsSync(p)) continue
+    const src = readFileSync(p, "utf8")
+    const re = /(?:from\s*|import\s*\(\s*)['"](\.[^'"]+)['"]/g
+    for (const m of src.matchAll(re)) {
+      const spec = m[1]
+      const base = resolve(dirname(p), spec)
+      const cands = [base, base + ".mjs", base + ".js", join(base, "index.mjs"), join(base, "index.js")]
+      if (!cands.some((c) => existsSync(c))) bad.push(rel + " → " + spec)
+    }
+  }
+  ok(bad.length === 0, "所有相对 import 都能找到文件", bad.join("；"))
+}
+
 console.log('\n③ bundle patch')
 
 const patchRel = pkg?.dsh?.bundle?.patch

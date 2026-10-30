@@ -73,7 +73,8 @@ node scripts/doctor.mjs         # 或者立刻再体检一次
 | `client.js` | 设置页（`__ModuleLoader__.load` 自注册 + `slots.inject('settings.section')`） |
 | `lib/kb.mjs` | 存储：写入 / 合并更新 / 搜索 / 相关推荐 / 索引 / 列表缓存 |
 | `lib/ingest.mjs` | 进料：抓网页、HTML→文本、抽要点、RSS、文件 / 目录 |
-| `lib/config.mjs` | 设置页那三项（root + 两个工具开关），存 `$DSH_HOME/feiyu-kb.config.json` |
+| `lib/config.mjs` | 设置页那几项（root + 工具开关 + 压缩 + 同步 + 记忆 + 大脑 + QQ 机器人），存 `$DSH_HOME/feiyu-kb.config.json` |
+| `lib/qq-bot.mjs` | QQ 机器人随 DSH 起落：短命启动器 + WMI 守夜（配置 `qqBot`，默认关） |
 | `scripts/preflight.mjs` | 包清单 / profile 一致性检查 |
 | `scripts/selftest.mjs` | 38 条功能断言（隔离 DSH_HOME） |
 | `scripts/bench.mjs` | 规模基准（`--big` 跑 1k/3k/10k） |
