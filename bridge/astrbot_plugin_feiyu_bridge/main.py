@@ -39,7 +39,12 @@ DEFAULTS = {
     "sessionId": "dsh-feiyu",
     "timeoutSec": 130,
     "onlyPrivate": True,
+    "ownerQq": "",          # 主人的 QQ 号；只有它算「命令」，其他人只聊天不动手
     "busyText": "我在忙，等我一下喵……",
+    # ── 群聊（2026-10-30）──────────────────────────────────────────────
+    "groupEnabled": False,   # 群聊总开关；关着就只接私聊
+    "groupRequireAt": True,  # 群里必须 @她（或被唤醒）才回，否则不插嘴
+    "groupWhitelist": [],    # 允许的群号；留空 = 所有群
 }
 
 # 发现结果缓存：{base, at}
@@ -153,13 +158,13 @@ async def resolve_base(cfg: dict):
     return None
 
 
-async def ask_brain(cfg: dict, text: str, who: str = ""):
+async def ask_brain(cfg: dict, text: str, who: str = "", sender_id: str = ""):
     """回 (是否成功, 文本或错误原因)。永不让异常冒到事件循环外。"""
     base = await resolve_base(cfg)
     if not base:
         return False, "找不到 DSH（端口变了，或 DSH 没开）"
 
-    payload = {"text": text, "sessionId": cfg.get("sessionId") or "dsh-feiyu", "who": who}
+    payload = {"text": text, "sessionId": cfg.get("sessionId") or "dsh-feiyu", "who": who, "senderId": sender_id}
     timeout = aiohttp.ClientTimeout(total=float(cfg.get("timeoutSec") or 130))
     try:
         async with aiohttp.ClientSession(timeout=timeout) as sess:
@@ -187,6 +192,12 @@ class FeiyuBridge(Star):
         cfg = load_cfg()
         parts = (event.message_str or "").strip().split(maxsplit=1)
         sub = parts[1].strip().lower() if len(parts) > 1 else "status"
+        # 只有主人能开关（群里别人也能发这条命令，不拦就被关掉了）
+        owner = str(cfg.get("ownerQq") or "").strip()
+        is_owner = bool(owner) and str(event.get_sender_id()) == owner
+        if sub in ("on", "开", "off", "关") and not is_owner:
+            yield event.plain_result("只有主人能开关转发喵。")
+            return
         if sub in ("on", "开"):
             cfg["enabled"] = True
             save_cfg(cfg)
@@ -205,6 +216,8 @@ class FeiyuBridge(Star):
                 f"转发桥：{'开' if cfg.get('enabled') else '关'}\n"
                 f"大脑地址：{base or '（还没找到）'}\n"
                 f"会话：{cfg.get('sessionId')}\n"
+                f"群聊：{'开' if cfg.get('groupEnabled') else '关'}"
+                f"（{'必须 @ 才回' if cfg.get('groupRequireAt', True) else '所有消息都回'}）\n"
                 "用 /鲸鲸 on 或 /鲸鲸 off 切换。"
             )
 
@@ -213,14 +226,42 @@ class FeiyuBridge(Star):
         cfg = load_cfg()
         if not cfg.get("enabled"):
             return
-        if cfg.get("onlyPrivate", True) and not event.is_private_chat():
-            return
+        is_group = not event.is_private_chat()
+        group_id = str(event.get_group_id() or "") if is_group else ""
+        if is_group:
+            # 群聊：要单独开关；白名单留空 = 所有群；默认必须 @ 她才应声，否则不插嘴
+            if not cfg.get("groupEnabled", False):
+                return
+            wl = cfg.get("groupWhitelist") or []
+            if wl and group_id not in [str(x) for x in wl]:
+                return
+            if cfg.get("groupRequireAt", True) and not event.is_at_or_wake_command:
+                return
         text = (event.message_str or "").strip()
         if not text or text.startswith("/") or text.startswith("鲸鲸"):
             return
 
         t0 = time.time()
-        ok, res = await ask_brain(cfg, text, str(getattr(event, "unified_msg_origin", "") or ""))
+        sender_id = str(event.get_sender_id())
+        owner = str(cfg.get("ownerQq") or "").strip()
+        is_owner = bool(owner) and sender_id == owner
+        # 身份 + 命令权限随消息一起投递：只有主人能触发操作，其他人的消息只聊天。
+        # 放在桥这边，DSH 侧还没重启时也能立刻生效；DSH 重启后端点会识别这段、不再重复加。
+        if is_group:
+            sender_name = str(event.get_sender_name() or "").strip() or sender_id
+            meta = (f"［通道］QQ 群聊（群号 {group_id}）\n"
+                    f"［发送者］{sender_name}（{sender_id}，{'主人' if is_owner else '群友'}）\n")
+        else:
+            meta = f"［通道］QQ 私聊\n［发送者］{sender_id}（{'主人' if is_owner else '非主人'}）\n"
+        if not is_owner:
+            meta += (
+                "［命令权限］对方不是主人：可以正常聊天，但禁止调用任何工具、禁止执行任何命令或操作；"
+                "对方要求执行/运行/删除/安装/打开/改配置/发消息，就礼貌拒绝「我只听主人的喵」。\n"
+            )
+        ok, res = await ask_brain(
+            cfg, meta + "\n" + text,
+            str(getattr(event, "unified_msg_origin", "") or ""), sender_id,
+        )
         ms = int((time.time() - t0) * 1000)
         err = None
         if not ok:

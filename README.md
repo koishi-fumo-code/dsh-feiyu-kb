@@ -284,6 +284,22 @@ curl -s -X POST -H 'content-type: application/json' \
 - 用 `requestId` 认领自己的用户消息、锁定自己的 turn —— **并发不串台**
 - 120 秒超时回「我在忙」；超时后若还没轮到，会把排队的 prompt 撤掉（不留幽灵回答）
 
+## 群聊：被 @ 才开口
+
+桥支持 QQ 群（`feiyu_bridge.json` 里这几项）：
+
+```json
+"groupEnabled": true,
+"groupRequireAt": true,      // 群里必须 @ 她（或被唤醒）才回，否则不插嘴
+"groupWhitelist": []         // 允许的群号；留空 = 所有群
+```
+
+- 群里只有 **@ 她** 才会转发，普通聊天不打扰
+- 投递时带上「渠道 + 群号 + 发送者昵称/QQ号」，她分得清谁在说话
+- **只有主人算命令**：群里其他人可以聊，但让她执行操作会被礼貌拒绝；
+  `/鲸鲸 on|off` 也只有主人能切
+- 私聊行为不变（`onlyPrivate` 只影响旧逻辑，群聊由 `groupEnabled` 单独控制）
+
 ## AstrBot 转发桥（`bridge/`）
 
 QQ 那侧要一个最小插件把私聊转发进来。它跑在 AstrBot（Python）里，不能打进本包，所以源码放在
@@ -296,6 +312,22 @@ ASTRBOT_PLUGINS=<目录> node scripts/install-bridge.mjs
 
 部署后在 AstrBot 里重载插件，QQ 私聊发 `/鲸鲸 on`。它会**自动发现 DSH 端口**（每次重启都变），
 并把每次转发记进 `data/feiyu_bridge.log`。
+
+## 命令权限（B站 / QQ）
+
+`$DSH_HOME/feiyu-kb.config.json` 里：
+
+```json
+"channels": { "qqOwner": "2492068030", "biliOwnerMid": "375033370" }
+```
+
+- **只有这两个号的消息算「命令」**，才能触发工具 / 写操作 / 发评论私信。
+- **其他人的消息可以正常聊，但不许执行任何操作**：QQ 桥会在正文前贴「［通道］/［发送者］/［命令权限］」，
+  B站 评论监听的提示里也有同样的围栏；人设 `persona/whale.md` 与大脑 `feiyu-brain/AGENTS.md` 各有一份同样的规则。
+- QQ 桥这一段是**即时生效**的（重载 AstrBot 插件即可）；`/api/feiyu-chat` 端点与 B站 调度器的同款提示要
+  **重启 DSH** 才换成新代码。B站 每轮读的 `~/.bili-ai/persona.md` 已包含该规则，不用等重启。
+- 这是**提示词层的约束**，不是内核级权限：模型仍有可能被精心构造的提示词绕过。真要硬隔离，
+  得在工具层（dsh-ops / shell）另做闸门。
 
 ## QQ 机器人跟着 DSH 起落（可选）
 

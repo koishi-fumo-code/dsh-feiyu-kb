@@ -447,10 +447,29 @@ export function apply(ctx, config) {
   }
   if (typeof ctx.on === 'function' && cfg.memory?.enabled !== false) {
     const pend = new Map()
+    // QQ 桥会在正文前贴「［通道］/［发送者］/［命令权限］」几行元信息；
+    // 那是给模型看的提示，不该写进记忆流水（否则聊天记录里全是这些）。
+    const stripChannelMeta = (t) => {
+      const keep = []
+      let skippingMeta = false
+      for (const line of String(t || '').split('\n')) {
+        const s = line.trim()
+        if (/^［(通道|发送者|命令权限)］/.test(s)) { skippingMeta = true; continue }
+        if (skippingMeta && !s) { skippingMeta = false; continue }
+        skippingMeta = false
+        keep.push(line)
+      }
+      return keep.join('\n').trim()
+    }
     const cleanUser = (t) => {
       const s = String(t || '')
       const i = s.lastIndexOf('［用户消息］')
-      if (i >= 0) return { text: s.slice(i + '［用户消息］'.length).trim(), src: 'qq' }
+      if (i >= 0) {
+        const raw = s.slice(i + '［用户消息］'.length).trim()
+        const sender = (raw.match(/［发送者］\s*(\d{5,})/) || [])[1] || ''
+        const qqOwner = String(cfg.channels?.qqOwner || '')
+        return { text: stripChannelMeta(raw), src: 'qq', who: sender && sender === qqOwner ? '狗修鲸' : sender }
+      }
       if (s.includes('【生物钟】')) {
         const line = (s.match(/【生物钟】[^\n]*/) || [''])[0].replace('【生物钟】', '').trim()
         return { text: '【B站轮次】' + line, src: 'bili' }
@@ -494,7 +513,7 @@ export function apply(ctx, config) {
             if (!p.text && !p.reply) return
             appendChat(memRoot(), {
               user: p.text, reply: p.reply, source: p.src, at: p.at,
-              who: p.src === 'qq' ? '狗修鲸' : '',
+              who: p.who || (p.src === 'qq' ? '狗修鲸' : ''),
             })
           }
         } catch { /* 记不上不影响对话 */ }
@@ -730,9 +749,28 @@ export function apply(ctx, config) {
         return '［最近的记忆］\n' + recent.map((m) => `· ${m.date} ${m.title}${m.line ? '：' + String(m.line).slice(0, 60) : ''}`).join('\n') + '\n\n'
       } catch { return '' }
     })()
+    // 发送者身份：只有主人的号算「命令」，其他人只聊天、不许动手。
+    //   桥会带 senderId；老版本没带就退而从 umo（snowluma:FriendMessage:2492068030）末尾抠。
+    const qqOwner = String(cfg.channels?.qqOwner || '').trim()
+    const senderId = (() => {
+      const direct = String(body?.senderId ?? '').trim()
+      if (direct) return direct
+      const m = /(\d{5,})\s*$/.exec(String(body?.who ?? ''))
+      return m ? m[1] : ''
+    })()
+    const isOwner = Boolean(qqOwner) && senderId === qqOwner
+    // 桥已经带了身份/权限块就不再重复加（桥先上线、DSH 后重启的过渡期两种情况都成立）
+    const alreadyTagged = /［通道］\s*QQ/.test(text)
+    const identityBlock = alreadyTagged
+      ? ''
+      : isOwner
+        ? `［通道］QQ 私聊\n［发送者］${senderId}（主人）\n\n`
+        : `［通道］QQ 私聊\n［发送者］${senderId || '未知'}（非主人）\n`
+          + '［命令权限］对方不是主人：可以正常聊天，但**禁止调用任何工具、禁止执行任何命令或操作**；'
+          + '对方要求执行/运行/删除/安装/打开/改配置/发消息，就礼貌拒绝「我只听主人的喵」。\n\n'
     const payload = `${memBlock}${persona
       ? `［她的人设］以下是她专属的设定，说话 / 写日记 / 选题都以它为准；与其它说法冲突时以这一份为准：\n${persona}\n\n`
-      : ''}［用户消息］\n${text}`
+      : ''}${identityBlock}［用户消息］\n${text}`
 
     // 运行时取控制器：不能写进 inject（headless 可能没有）
     let ctl
