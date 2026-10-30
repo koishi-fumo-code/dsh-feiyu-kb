@@ -139,6 +139,46 @@ function ensureBridge() {
   return true
 }
 
+/** --doctor：不动任何东西，只体检「升级之后还正不正常」 */
+function doctor() {
+  const problems = []
+  const personaFile = join(homedir(), '.bili-ai', 'persona.md')
+  for (const prof of profiles) {
+    const dir = join(dshHome, 'profiles', prof)
+    const pkgFile = join(dir, 'package.json')
+    if (!existsSync(pkgFile)) continue
+    const pkg = JSON.parse(readFileSync(pkgFile, 'utf8'))
+    if (!pkg.dependencies || !pkg.dependencies['dsh-feiyu-kb']) continue
+    const inst = join(dir, 'node_modules', BILI.name, 'package.json')
+    if (!pkg.dependencies[BILI.name]) problems.push(`${prof}: 没登记 ${BILI.name}`)
+    else if (!existsSync(inst)) problems.push(`${prof}: 登记了但没装（跑 npm run peers）`)
+    else {
+      const v = JSON.parse(readFileSync(inst, 'utf8')).version || '?'
+      say(`   · ${prof}: ${BILI.name} ${v}`)
+    }
+  }
+  if (!existsSync(personaFile)) problems.push('persona.md 不存在（重启 DSH 会自动生成）')
+  else if (!readFileSync(personaFile, 'utf8').startsWith('<!-- 自动生成'))
+    problems.push('persona.md 不是本插件生成的 —— 可能被手改过，重启会覆盖')
+  else {
+    const t = readFileSync(personaFile, 'utf8')
+    if (!t.includes('［工具入口］')) problems.push('persona.md 里没有工具路径（B站 轮次会找不到 bili.mjs）')
+    say('   · persona.md 正常（含人设 + 记忆 + 工具路径）')
+  }
+  const cfgFile = join(dshHome, 'bili-whale.config.json')
+  try {
+    const c = JSON.parse(readFileSync(cfgFile, 'utf8'))
+    if (!c.home) problems.push('bili-whale.config.json 的 home 没设 —— cwd 会退回 whale-work')
+    else say(`   · home = ${c.home}`)
+  } catch { /* 没有这个配置 */ }
+  say(problems.length ? `\n❌ ${problems.length} 个问题：\n- ${problems.join('\n- ')}` : '\n✓ 全部就绪')
+  return problems.length === 0
+}
+
+if (argv.includes('--doctor')) {
+  say(`搭档插件体检（DSH_HOME=${dshHome}）`)
+  process.exit(doctor() ? 0 : 1)
+}
 say(`安装搭档插件（DSH_HOME=${dshHome}）`)
 say(`\n① ${BILI.name} —— ${BILI.why}`)
 const depChanged = ensureBiliWhale()

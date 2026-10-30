@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, appendFileSync, statSync, writeFileSync, readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { randomUUID } from 'node:crypto'
 const PKG_DIR = dirname(fileURLToPath(import.meta.url))
 import {
   DEFAULT_ROOT, KINDS, TIERS, STATUSES, resolveRoot, ensureRoot, writeEntry,
@@ -28,14 +29,16 @@ import {
 } from './lib/kb.mjs'
 
 import { ingestUrl, ingestFile, ingestDir, ingestFeed, capture } from './lib/ingest.mjs'
-import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS, DEFAULT_CTX, DEFAULT_SYNC } from './lib/config.mjs'
+import { loadConfig, saveConfig, configPath, DEFAULT_TOOLS, DEFAULT_CTX, DEFAULT_SYNC, DEFAULT_QQ_BOT } from './lib/config.mjs'
 import { syncCompaction, compactionStatus } from './lib/ctx-save.mjs'
 import { syncDirs, syncStatus, DEFAULT_SYNC_DIRS } from './lib/sync-dirs.mjs'
 import { startWatchdog, runDiagnosis, lastWatchdogState } from './lib/watchdog.mjs'
+import { startQqBot, stopQqBot, isDesktopDshApp } from './lib/qq-bot.mjs'
 import {
   resolveMemoryRoot, writeMemory, searchMemories, searchChats, readMemory,
   memoryStatus, appendChat, recentMemories, rebuildMemoryIndex, writeDigest,
 } from './lib/memory.mjs'
+import { materializePersona } from './lib/materialize.mjs'
 
 export const name = 'feiyu-kb'
 // ⚠️ 只 inject tools：webServer 在 headless profile 里可能没有，
@@ -370,6 +373,7 @@ export function apply(ctx, config) {
         const r = writeMemory(memRoot(), args)
         try { rebuildMemoryIndex(memRoot()) } catch { /* 索引坏了不影响正文 */ }
         try { writeDigest(memRoot()) } catch { /* 摘要只是给别的通道用，失败无妨 */ }
+        try { rematerialize() } catch { /* 生成物失败无妨 */ }
         log(`mem_add ${r.id}`)
         return { ok: true, ...r }
       } catch (err) {
@@ -596,13 +600,31 @@ export function apply(ctx, config) {
   }
 
   /** 读人设源。插件跑在宿主进程里，不受会话沙箱限制 */
+  /**
+   * 把「人设 + 最近记忆 + 工具路径」生成成 ~/.bili-ai/persona.md。
+   * 为什么生成而不是改插件代码：dsh-bili-whale 升级会覆盖 node_modules 里的补丁，
+   * 但它本来就读这个文件 —— 生成它，升级就免疫了。
+   */
+  const rematerialize = () => {
+    try {
+      if (cfg.memory?.enabled === false) return
+      const personaText = chatPersona()
+      if (!personaText) return
+      let digestText = ''
+      try { digestText = readFileSync(join(memRoot(), 'recent.md'), 'utf8') } catch { /* 还没有记忆 */ }
+      materializePersona({ personaText, digestText, home: dshHomeDir() })
+    } catch { /* 生成失败不影响主流程 */ }
+  }
+  rematerialize()
+
   const chatPersona = () => {
     const cfgPersona = (() => { try { return JSON.parse(readFileSync(configPath(), 'utf8')).brain?.persona || '' } catch { return '' } })()
     const candidates = [
       process.env.FEIYU_PERSONA_FILE,
       cfgPersona,
       join(dshHomeDir(), 'feiyu-persona.md'),
-      join(process.env.USERPROFILE || process.env.HOME || '.', '.bili-ai', 'persona.md'),
+      // 注意：不要再把 ~/.bili-ai/persona.md 当人设源 —— 那是本插件生成给 B站 插件的产物，
+      // 读回去会把人设和记忆摘要、工具路径搅在一起
     ].filter(Boolean)
     for (const p of candidates) {
       try {
@@ -940,6 +962,37 @@ export function apply(ctx, config) {
     log('异常看门狗已启动（启动 + 每 10 分钟查崩溃日志）')
   } catch (e) {
     log(`看门狗没起来：${e?.message ?? e}`)
+  }
+
+  /* ─────────────── QQ 机器人：跟着 DSH 一起起落 ─────────────── */
+  // 需求（2026-10-30）：DSH 启动 ⇒ AstrBot + SnowLuma 自动启动；DSH 关闭 ⇒ 自动停止。
+  // 这里只负责"拉起 + 正常卸载时停掉"；如果 DSH 被强杀/崩溃，由守夜进程兜底
+  // （见 lib/qq-bot.mjs 与 D:\QQBot\dsh-bot-lifecycle.ps1）。
+  try {
+    const qq = cfg.qqBot || DEFAULT_QQ_BOT
+    if (qq.enabled) {
+      if (qq.requireDesktopApp && !isDesktopDshApp()) {
+        log(`QQ 机器人自动启停跳过：当前不是桌面版 DSH（execPath=${process.execPath}）`)
+      } else {
+        const bootId = randomUUID()
+        // 守夜盯的是 **Electron 主进程**（插件宿主是它的子进程）：DSH 退出时主进程先没，
+        // 比盯插件宿主更稳，也不会因为插件热重载误停机器人。
+        const dshPid = Number(process.ppid) > 0 ? Number(process.ppid) : process.pid
+        const qqRoot = qq.root || DEFAULT_QQ_BOT.root
+        const delay = Math.max(1000, Number(qq.startDelayMs) || DEFAULT_QQ_BOT.startDelayMs)
+        const startTimer = setTimeout(() => {
+          try { startQqBot({ root: qqRoot, dshPid, bootId, log }) } catch (e) { log(`QQ 机器人没拉起来：${e?.message ?? e}`) }
+        }, delay)
+        startTimer.unref?.()
+        effect(() => () => {
+          try { clearTimeout(startTimer) } catch { /* 忽略 */ }
+          try { stopQqBot({ root: qqRoot, dshPid, bootId, log }) } catch (e) { log(`QQ 机器人没停下来：${e?.message ?? e}`) }
+        }, 'feiyu-kb: QQ 机器人生命周期')
+        log(`QQ 机器人自动启停已开启（${delay}ms 后拉起 ${qqRoot}，DSH pid ${dshPid}）`)
+      }
+    }
+  } catch (e) {
+    log(`QQ 机器人生命周期没挂上：${e?.message ?? e}`)
   }
 }
 
