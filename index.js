@@ -1,7 +1,7 @@
 /**
  * dsh-feiyu-kb —— 大肥鱼知识库 · DSH 插件（host 半端）
  * ============================================================================
- * 它做什么：把 `D:/dsh工作区/大肥鱼知识库/` 暴露成一组 DSH 工具 —— 于是**任何模型运行时**
+ * 它做什么：把知识库文件夹暴露成一组 DSH 工具 —— 于是**任何模型运行时**
  * （桌面会话、headless 值班轮、subagent…）只要在这台机器上跑，就都能搜 / 读 / 写这个库。
  *
  * 工具：
@@ -434,7 +434,13 @@ export function apply(ctx, config) {
    * DSH 直接聊 —— 最后都会落进同一个 dsh-feiyu 会话。记在会话上，等于全记了。
    */
   try { writeDigest(memRoot()) } catch { /* 摘要失败无妨 */ }
-  const BRAIN_SESSION = 'dsh-feiyu'
+  const brainSession = () => {
+    try {
+      const c = JSON.parse(readFileSync(configPath(), 'utf8'))
+      if (typeof c.brain?.session === 'string' && c.brain.session.trim()) return c.brain.session.trim()
+    } catch { /* 用默认 */ }
+    return 'dsh-feiyu'
+  }
   if (typeof ctx.on === 'function' && cfg.memory?.enabled !== false) {
     const pend = new Map()
     const cleanUser = (t) => {
@@ -453,7 +459,11 @@ export function apply(ctx, config) {
         try {
           if (cfg.memory?.enabled === false) return
           const sid = String(session?.header?.id ?? session?.id ?? '')
-          if (sid !== BRAIN_SESSION) return
+          // 认两种：会话名对得上，或者这个会话的工作目录就是「大脑目录」
+          //（B站 插件可以不改会话名，只要把 cwd 指到同一个地方，记忆照样收）
+          const cwdOf = String(session?.header?.cwd ?? session?.cwd ?? '').replace(/\\/g, '/').toLowerCase()
+          const brainCwd = chatCwd().replace(/\\/g, '/').toLowerCase()
+          if (sid !== brainSession() && !(cwdOf && cwdOf === brainCwd)) return
           const type = event?.type
           if (type === 'user/message' && event?.data?.source?.kind === 'user') {
             const parts = (event.data.content || []).map((b) => (b && b.type === 'text' ? b.text : '')).join('\n')
@@ -486,7 +496,7 @@ export function apply(ctx, config) {
         } catch { /* 记不上不影响对话 */ }
       })
       try { ctx.effect(() => () => { try { dispose?.() } catch { /* 忽略 */ } }, 'feiyu-kb: 记忆记录器') } catch { /* 没有 effect 就常驻 */ }
-      log(`记忆记录器已挂上（会话 ${BRAIN_SESSION}）`)
+      log(`记忆记录器已挂上（会话 ${brainSession()}）`)
     } catch (e) {
       log(`记忆记录器没起来：${e?.message ?? e}`)
     }
@@ -559,12 +569,13 @@ export function apply(ctx, config) {
   // 大脑会话的工作目录。**每次现读配置**，换目录不用重启 DSH。
   //   优先级：feiyu-kb.config.json 的 brainCwd > 环境变量 > 默认（D 盘工作区里的独立子目录）
   //   放独立子目录而不是工作区根：根目录的 AGENTS.md 是施工约定，会被注入成人格，跟人设打架。
+  const dshHomeDir = () => process.env.DSH_HOME || join(process.env.USERPROFILE || process.env.HOME || '.', '.dsh')
   const chatCwd = () => {
     try {
       const c = JSON.parse(readFileSync(configPath(), 'utf8'))
-      if (typeof c.brainCwd === 'string' && c.brainCwd.trim()) return c.brainCwd.trim()
+      if (typeof c.brain?.cwd === 'string' && c.brain.cwd.trim()) return c.brain.cwd.trim()
     } catch { /* 读不到就用默认 */ }
-    return process.env.FEIYU_BRAIN_CWD || 'D:\\dsh工作区\\feiyu-brain'
+    return process.env.FEIYU_BRAIN_CWD || join(dshHomeDir(), 'feiyu-brain')
   }
   const CHAT_BUSY_TEXT = '我在忙，等我一下喵……'
 
@@ -584,11 +595,13 @@ export function apply(ctx, config) {
       .join('')
   }
 
-  /** 读唯一人设源。插件跑在宿主进程里，不受会话沙箱限制，能读到 D: 上的 whale.md */
+  /** 读人设源。插件跑在宿主进程里，不受会话沙箱限制 */
   const chatPersona = () => {
+    const cfgPersona = (() => { try { return JSON.parse(readFileSync(configPath(), 'utf8')).brain?.persona || '' } catch { return '' } })()
     const candidates = [
       process.env.FEIYU_PERSONA_FILE,
-      join('D:', 'dsh工作区', 'persona', 'whale.md'),
+      cfgPersona,
+      join(dshHomeDir(), 'feiyu-persona.md'),
       join(process.env.USERPROFILE || process.env.HOME || '.', '.bili-ai', 'persona.md'),
     ].filter(Boolean)
     for (const p of candidates) {
@@ -679,8 +692,8 @@ export function apply(ctx, config) {
     try { body = await readBody(req) } catch { return sendJson(res, 400, { ok: false, error: '请求体读不出来' }) }
     const text = String(body?.text ?? '').trim()
     if (!text) return sendJson(res, 400, { ok: false, error: 'text 不能为空' })
-    const sessionId = String(body?.sessionId ?? 'dsh-feiyu').trim() || 'dsh-feiyu'
-    // 大脑会话 cwd 在 D:/dsh工作区/feiyu-brain（workspace-write 沙箱），读不到 D: 上的人设 ⇒ 由插件注入
+    const sessionId = String(body?.sessionId ?? brainSession()).trim() || brainSession()
+    // 大脑会话在独立工作目录里（workspace-write 沙箱），读不到插件外的文件 ⇒ 人设由插件注入
     const persona = chatPersona()
     // 记忆：把最近几条「值得记住的事」塞进提示，让她张口就知道上次聊到哪
     const memBlock = (() => {
@@ -791,6 +804,12 @@ export function apply(ctx, config) {
                 if (typeof body.memory.root === 'string') patch.memory.root = body.memory.root
                 if (body.memory.inject !== undefined) patch.memory.inject = body.memory.inject
                 if (Array.isArray(body.memory.sessionOff)) patch.memory.sessionOff = body.memory.sessionOff
+              }
+              if (body.brain && typeof body.brain === 'object') {
+                patch.brain = {}
+                for (const k of ['session', 'cwd', 'persona']) {
+                  if (typeof body.brain[k] === 'string') patch.brain[k] = body.brain[k]
+                }
               }
               cfg = saveConfig(patch)
               if (patch.sync) startSync()          // 目录同步改了：重启定时器（立即生效，不用重启）

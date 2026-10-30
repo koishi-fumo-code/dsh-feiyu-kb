@@ -68,6 +68,32 @@ node dsh-feiyu-kb/scripts/selftest.mjs        # 41 条功能断言
 **自动注入**：每次对话会把最近 5 条记忆的一句话塞进提示（`memory.inject` 可调）。
 B站 轮次读 `recent.md` 摘要（由本插件维护），所以刷视频时她也知道用户最近说过什么。
 
+## 第一次使用：让它在你机器上跑起来
+
+插件里**没有写死的绝对路径**，默认都跟着 `$DSH_HOME`（Windows 上是 `C:\Users\<你>\.dsh`）：
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| `kb.root` | `~/dsh-feiyu-kb` | 知识库 |
+| `memory.root` | `$DSH_HOME/feiyu-memory` | 记忆库 |
+| `brain.session` | `dsh-feiyu` | 大脑会话名 |
+| `brain.cwd` | `$DSH_HOME/feiyu-brain` | 大脑会话的工作目录 |
+| `brain.persona` | `$DSH_HOME/feiyu-persona.md` | 人设文件（找不到就不注入） |
+
+**记忆怎么收进来**：插件订阅 DSH 的 `session/event`，会话满足**任一**条件就记：
+
+1. 会话名 = `brain.session`（默认 `dsh-feiyu`）
+2. 会话的工作目录 = `brain.cwd`
+
+所以接 B站 插件时**不用改它的会话名** —— 把它的会话工作目录指到 `brain.cwd` 就行，记忆照样收进来。
+
+记录时会按来源打标：文本里有 `［用户消息］` → `qq`，有 `【生物钟】` → `bili`，其余 `dsh`。
+
+**QQ 怎么接**：部署 `bridge/` 里的 AstrBot 插件（`npm run bridge:install`），它 POST `/api/feiyu-chat`；
+请求里的 `sessionId` 不传就用 `brain.session`。
+
+**换机器**：整个 `$DSH_HOME` 拷走即可。如果你在配置里填了绝对路径，改配置就行，不用改代码。
+
 ## 知识从哪来
 
 | 通道 | 怎么用 |

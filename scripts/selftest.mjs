@@ -219,7 +219,10 @@ ok(kbAfter === kbBefore, '记忆没写进知识库（两本账分开了）', { k
 const memRootDir = process.env.FEIYU_MEMORY_ROOT
 const todayKey = (() => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` })()
 const chatPath = join(memRootDir, 'chats', `${todayKey}.md`)
-const fire = (id, ev) => { for (const fn of sessionHandlers) fn({ header: { id } }, ev) }
+const fire = (idOrSession, ev) => {
+  const s = typeof idOrSession === 'string' ? { header: { id: idOrSession } } : idOrSession
+  for (const fn of sessionHandlers) fn(s, ev)
+}
 ok(sessionHandlers.length > 0, '记忆记录器订阅了 session/event')
 fire('dsh-feiyu', { type: 'user/message', time: Date.now(), data: { source: { kind: 'user' }, content: [{ type: 'text', text: '［她的人设］…\n\n［用户消息］\n你好呀' }] } })
 fire('dsh-feiyu', { type: 'assistant/message', data: { message: { content: [{ type: 'reasoning', text: 'SECRET-REASONING' }, { type: 'text', text: '在呢喵。' }] } } })
@@ -235,6 +238,15 @@ ok(readFileSync(chatPath, 'utf8').length === lenAfterQQ, '别的会话不写进�
 fire('dsh-feiyu', { type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: 'Time sampled while preparing turn 1' }] } })
 fire('dsh-feiyu', { type: 'turn/end', data: {} })
 ok(readFileSync(chatPath, 'utf8').length === lenAfterQQ, '系统提示不写进记忆')
+
+// 会话名不同、但 cwd 就是大脑目录 → 也要记（B站 插件不必改会话名）
+const brainCwdTest = join(process.env.DSH_HOME, 'feiyu-brain')
+const biliSess = { header: { id: 'bili-whale', cwd: brainCwdTest } }
+fire(biliSess, { type: 'user/message', time: Date.now(), data: { source: { kind: 'user' }, content: [{ type: 'text', text: '【生物钟】你醒了 —— 20:00' }] } })
+fire(biliSess, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '刷完了喵' }] } } })
+fire(biliSess, { type: 'turn/end', data: {} })
+const t3 = readFileSync(chatPath, 'utf8')
+ok(t3.includes('刷完了喵') && t3.includes('bili'), 'cwd 指向大脑目录的会话也记（不用改会话名）', t3.slice(0, 120))
 
 console.log(`\n${pass} 通过 / ${fail} 失败`)
 if (oldMemRoot === undefined) delete process.env.FEIYU_MEMORY_ROOT
