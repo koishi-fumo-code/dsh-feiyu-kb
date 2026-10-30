@@ -37,9 +37,14 @@ const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
 const say = (...a) => console.log(...a)
 
 // 两个搭档：一个是 DSH 插件（B站），一个是 AstrBot 插件（QQ）
+// 版本策略：默认**钉住**我们验证过的那次提交 —— 上游改了什么都不会悄悄影响我们；
+// 想跟最新就显式 `--latest`（升级变成一次有意识的动作）。
+const BILI_SHA = '8b0009f8ce2ebdc421afcb2e727b19ac18912ec6'
 const BILI = {
   name: 'dsh-bili-whale',
-  spec: 'github:Alterssss/dsh-bili-whale',
+  spec: argv.includes('--latest')
+    ? 'github:Alterssss/dsh-bili-whale'
+    : `github:Alterssss/dsh-bili-whale#${BILI_SHA}`,
   why: 'B站 通道：刷视频、归档进知识库、写日记',
 }
 const BRIDGE = {
