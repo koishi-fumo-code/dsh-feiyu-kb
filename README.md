@@ -1,8 +1,9 @@
 # dsh-feiyu-kb
 
 > DSH 插件：把本地一个**纯 Markdown 的知识库**，变成 DSH 里**任何模型运行时**都能调用的工具。
+> 0.7.0 起，它还是一个**记忆库** —— 记知识，也记人和事。
 
-▶ **[88 秒介绍片](https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.3.1/dsh-feiyu-kb-intro.mp4)** · [封面](https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.3.1/poster.png)
+▶ **[131 秒介绍片 · 0.7.0](https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.7.0/dsh-feiyu-kb-intro-0.7.0.mp4)** · [旧版 88 秒](https://github.com/koishi-fumo-code/dsh-feiyu-kb/releases/download/v0.3.1/dsh-feiyu-kb-intro.mp4)
 
 ---
 
