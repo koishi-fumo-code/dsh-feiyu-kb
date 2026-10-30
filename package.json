@@ -1,7 +1,7 @@
 {
   "name": "dsh-feiyu-kb",
-  "version": "0.6.3",
-  "description": "DSH 插件：本地 Markdown 知识库 —— 设置页可改库位置与工具开关，支持视频/网页/文件/目录/RSS/随手记多种进料",
+  "version": "0.7.0",
+  "description": "DSH 插件：大肥鱼的大脑 —— 知识库 + 记忆库 + QQ 通道端点 + 设置页与输入框开关；附带 AstrBot 转发桥源码",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -14,6 +14,7 @@
     "client.js",
     "lib",
     "scripts",
+    "bridge",
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
@@ -60,6 +61,11 @@
     "test": "node scripts/selftest.mjs",
     "bench": "node scripts/bench.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "compose": "node scripts/compose-check.mjs"
+    "compose": "node scripts/compose-check.mjs",
+    "verify:chat": "node scripts/verify-p3.mjs",
+    "verify:brain": "node scripts/verify-p4.mjs",
+    "verify:observe": "node scripts/verify-p5.mjs",
+    "rollback": "node scripts/rollback-merge.mjs",
+    "bridge:install": "node scripts/install-bridge.mjs"
   }
 }

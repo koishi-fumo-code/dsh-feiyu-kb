@@ -1,0 +1,7 @@
+name: astrbot_plugin_feiyu_bridge
+display_name: 大肥鱼转发桥
+short_desc: 把 QQ 私聊转发给 DSH 里的「鲸鲸」大脑，自己不当第二个人格
+desc: 合并三条鱼 · P3。收到私聊 → POST /api/feiyu-chat → 把回复原样发回。DSH 的 Web 端口每次重启都会变，插件会扫本机监听端口自动发现。默认关闭；确认 DSH 端点通了再 /鲸鲸 on 打开。
+version: 0.2.0
+author: local
+astrbot_version: ">=4.0.0"

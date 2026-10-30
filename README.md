@@ -34,7 +34,9 @@ node dsh-feiyu-kb/scripts/selftest.mjs        # 41 条功能断言
 
 装好后：设置里多一页「知识库」；模型手里多 8 只工具。
 
-## 你会得到什么（8 只工具）
+## 你会得到什么（12 只工具）
+
+### 知识库（`kb_*`）—— 那期视频讲了什么
 
 | 工具 | 干什么 |
 |---|---|
@@ -47,7 +49,24 @@ node dsh-feiyu-kb/scripts/selftest.mjs        # 41 条功能断言
 | `kb_status` | 库概况：条数、类型/档位分布、最近几条 |
 | `kb_index` | 重建索引（手改过 `entries/` 之后调一次） |
 
-工具定义有固定 token 开销（每轮请求都要带），所以描述是**给模型看的路标**，不是说明书 —— 目前 8 只合计约 3.4k 字符（≈1k token）。
+工具定义有固定 token 开销（每轮请求都要带），所以描述是**给模型看的路标**，不是说明书。
+
+### 记忆库（`mem_*`）—— 你上次跟我说过什么
+
+和知识库刻意分开：知识是**档案**（可公开、按主题），记忆是**往来**（偏私密、按时间）。
+
+| 工具 | 干什么 |
+|---|---|
+| `mem_add` | 记一件事：谁 + 什么事 + 什么时候，一两句话 |
+| `mem_search` | 搜记忆，也能搜原始对话流水（默认搜最近 14 天） |
+| `mem_read` | 按 id 读一条完整记忆 |
+| `mem_status` | 记忆库概况：条数、最近一条、流水天数 |
+
+**自动记录**：插件订阅 `session/event`，把 `dsh-feiyu` 会话里的问答成对写进 `chats/YYYY-MM-DD.md`，
+并按来源打标（`qq` / `bili` / `dsh`）。所以三个通道的对话都会进同一本账，不需要各通道分别对接。
+
+**自动注入**：每次对话会把最近 5 条记忆的一句话塞进提示（`memory.inject` 可调）。
+B站 轮次读 `recent.md` 摘要（由本插件维护），所以刷视频时她也知道用户最近说过什么。
 
 ## 知识从哪来
 
@@ -206,6 +225,43 @@ node lib/kb-cli.mjs where      # 命令行视角
 ```bash
 node scripts/uninstall.mjs --yes              # 保留知识库数据
 node scripts/uninstall.mjs --yes --purge-data # 连数据一起删
+```
+
+## QQ 通道：`POST /api/feiyu-chat`
+
+把外部消息送进「大脑会话」，等她的回复再返回。和知识库/记忆库同在一个插件里，不额外起服务。
+
+```bash
+curl -s -X POST -H 'content-type: application/json' \
+  -d '{"text":"你是谁呀","sessionId":"dsh-feiyu"}' \
+  http://127.0.0.1:<dsh端口>/api/feiyu-chat
+```
+
+- 只接受本机同源请求（`sameOriginOk`）
+- 先 `create` 会话 → `follow` 拿 cursor → `prompt(mode:'queue')` → 收 `assistant/message` 到 `turn/end`
+- 用 `requestId` 认领自己的用户消息、锁定自己的 turn —— **并发不串台**
+- 120 秒超时回「我在忙」；超时后若还没轮到，会把排队的 prompt 撤掉（不留幽灵回答）
+
+## AstrBot 转发桥（`bridge/`）
+
+QQ 那侧要一个最小插件把私聊转发进来。它跑在 AstrBot（Python）里，不能打进本包，所以源码放在
+`bridge/astrbot_plugin_feiyu_bridge/` 随包发布：
+
+```bash
+node scripts/install-bridge.mjs                    # 部署到默认的 AstrBot 插件目录
+ASTRBOT_PLUGINS=<目录> node scripts/install-bridge.mjs
+```
+
+部署后在 AstrBot 里重载插件，QQ 私聊发 `/鲸鲸 on`。它会**自动发现 DSH 端口**（每次重启都变），
+并把每次转发记进 `data/feiyu_bridge.log`。
+
+## 运维脚本
+
+```bash
+npm run verify:chat      # 通道验收：自动发现端口 + 并发不串台
+npm run verify:brain     # 大脑验收：B站 轮次有没有落进 dsh-feiyu
+npm run verify:observe   # 观察报告：轮次/来源/耗时/归档统计
+npm run rollback -- --to p4 --yes     # 一键回滚（--to orig 全撤）
 ```
 
 ## 许可
