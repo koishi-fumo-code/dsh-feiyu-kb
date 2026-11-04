@@ -69,9 +69,10 @@ node dsh-feiyu-kb/scripts/selftest.mjs        # 41 条功能断言
 **读取（默认关）**：写入不受任何开关控制，但「要不要把记忆塞进提示」是另一件事 ——
 
 - 全局 `memory.read`（默认 `false`）：总闸；
-- 每个会话还能在输入框旁的「本会话记忆」开关里单独打开（进 `memory.readSessions` 白名单）。
+- 每个会话还能在输入框旁的「本会话记忆」开关里单独打开（进 `memory.readSessions` 白名单）；
+- `memory.alwaysReadSessions`：**常开白名单**，里面的会话绕过总闸和开关（例：B站/QQ 共用的 `dsh-feiyu`）。
 
-两者任一为真才注入；打开时把最近 5 条记忆的一句话塞进提示（`memory.inject` 可调）。
+三者任一为真才注入；打开时把最近 5 条记忆的一句话塞进提示（`memory.inject` 可调）。
 这么设计的原因：**先如实记下来，再决定要不要用** —— 记忆是私密的，默认不往外带更安全。
 B站 轮次读 `recent.md` 摘要（由本插件维护），读关着时同样不注入。
 

@@ -357,10 +357,18 @@ export function apply(ctx, config) {
   // ⚠️ 2026-11-04 拆分：写入**永远开**（先记下来）；读取由 read / readSessions 控制，默认关
   const memWriteOn = () => true
   const memReadOn = (sid) => {
+    const id = sid ? String(sid) : ''
+    // ① 常开白名单：绕过总闸与会话开关（例：B站 的大脑会话）
+    const always = Array.isArray(cfg.memory?.alwaysReadSessions) ? cfg.memory.alwaysReadSessions : []
+    if (id && always.includes(id)) return true
+    // ② 全局总闸
     if (cfg.memory?.read === true) return true
+    // ③ 单会话白名单（界面开关写这里）
     const list = Array.isArray(cfg.memory?.readSessions) ? cfg.memory.readSessions : []
-    return Boolean(sid) && list.includes(String(sid))
+    return Boolean(id) && list.includes(id)
   }
+  // 只要有任何一条读取通道开着，人设/摘要就要生成（B站 读的是这个文件）
+  const memAnyRead = () => memReadOn(brainSession())
   const memOn = () => memWriteOn()   // 兼容旧调用点：只表示"写入是否开"
 
   tool({
@@ -632,7 +640,7 @@ export function apply(ctx, config) {
    */
   const rematerialize = () => {
     try {
-      if (!memReadOn(brainSession())) return   // 读关着就不把记忆摘要塞进人设文件
+      if (!memAnyRead()) return   // 读关着就不把记忆摘要塞进人设文件
       const personaText = chatPersona()
       if (!personaText) return
       let digestText = ''
