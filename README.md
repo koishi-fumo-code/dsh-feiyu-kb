@@ -63,11 +63,17 @@ node dsh-feiyu-kb/scripts/selftest.mjs        # 41 条功能断言
 | `mem_read` | 按 id 读一条完整记忆 |
 | `mem_status` | 记忆库概况：条数、最近一条、流水天数 |
 
-**自动记录**：插件订阅 `session/event`，把 `dsh-feiyu` 会话里的问答成对写进 `chats/YYYY-MM-DD.md`，
+**自动记录（永远开）**：插件订阅 `session/event`，把 `dsh-feiyu` 会话里的问答成对写进 `chats/YYYY-MM-DD.md`，
 并按来源打标（`qq` / `bili` / `dsh`）。所以三个通道的对话都会进同一本账，不需要各通道分别对接。
 
-**自动注入**：每次对话会把最近 5 条记忆的一句话塞进提示（`memory.inject` 可调）。
-B站 轮次读 `recent.md` 摘要（由本插件维护），所以刷视频时她也知道用户最近说过什么。
+**读取（默认关）**：写入不受任何开关控制，但「要不要把记忆塞进提示」是另一件事 ——
+
+- 全局 `memory.read`（默认 `false`）：总闸；
+- 每个会话还能在输入框旁的「本会话记忆」开关里单独打开（进 `memory.readSessions` 白名单）。
+
+两者任一为真才注入；打开时把最近 5 条记忆的一句话塞进提示（`memory.inject` 可调）。
+这么设计的原因：**先如实记下来，再决定要不要用** —— 记忆是私密的，默认不往外带更安全。
+B站 轮次读 `recent.md` 摘要（由本插件维护），读关着时同样不注入。
 
 ## 第一次使用：让它在你机器上跑起来
 
@@ -299,6 +305,8 @@ curl -s -X POST -H 'content-type: application/json' \
 - **只有主人算命令**：群里其他人可以聊，但让她执行操作会被礼貌拒绝；
   `/鲸鲸 on|off` 也只有主人能切
 - 私聊行为不变（`onlyPrivate` 只影响旧逻辑，群聊由 `groupEnabled` 单独控制）
+- **语音**：转发的回复默认回「文字 + 语音」（`feiyu_bridge.json` 的 `voice:true`）；语音用
+  `feiyu-voice` 当前 profile（重糯·磁性）实时合成，**放在文字后面**发；`voice:false` 只回文字
 
 ## AstrBot 转发桥（`bridge/`）
 

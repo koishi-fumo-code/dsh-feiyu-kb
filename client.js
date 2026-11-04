@@ -340,35 +340,36 @@ window.__ModuleLoader__.load({
 
           function MemToggle(props) {
             const sessionId = String((props && props.sessionId) || '')
-            const [off, setOff] = useState(null)
+            // 2026-11-04：这个开关只管「读不读」；写入永远在记
+            const [on, setOn] = useState(null)
             useEffect(() => {
               let alive = true
               jget('/config')
                 .then((d) => {
                   if (!alive) return
-                  const list = (d && d.config && d.config.memory && Array.isArray(d.config.memory.sessionOff))
-                    ? d.config.memory.sessionOff : []
-                  setOff(sessionId ? list.includes(sessionId) : false)
+                  const m = (d && d.config && d.config.memory) || {}
+                  const list = Array.isArray(m.readSessions) ? m.readSessions : []
+                  setOn(Boolean(sessionId) && (m.read === true || list.includes(sessionId)))
                 })
-                .catch(() => { if (alive) setOff(false) })
+                .catch(() => { if (alive) setOn(false) })
               return () => { alive = false }
             }, [sessionId])
             const flip = useCallback(async () => {
               if (!sessionId) return
-              const next = !off
-              setOff(next)
+              const want = !on
+              setOn(want)
               try {
-                const r = await jpost('/memory/session', { sessionId, off: next })
-                setOff(Boolean(r && r.off))
-              } catch { setOff(!next) }
-            }, [off, sessionId])
+                const r = await jpost('/memory/session', { sessionId, read: want })
+                setOn(Boolean(r && r.read))
+              } catch { setOn(!want) }
+            }, [on, sessionId])
             return h('div', {
               'data-fk-mem-toggle': '',
-              'data-on': off === false ? '' : undefined,
+              'data-on': on === true ? '' : undefined,
               onClick: flip,
-              title: off ? '本会话不用全局记忆（QQ / B站 不受影响）' : '本会话使用全局记忆（点一下关掉）',
+              title: on ? '本会话会读记忆（写入一直在记，点一下关掉读取）' : '本会话不读记忆（写入仍在记，点一下打开读取）',
             }, h('span', { 'data-fk-mem-dot': '' }), h('span', null,
-              off === null ? '记忆…' : off ? '本会话记忆 关' : '本会话记忆 开'))
+              on === null ? '记忆…' : on ? '本会话记忆 读' : '本会话记忆 关'))
           }
 
           slots.inject('conversation.composer.dock', () => slots.register(

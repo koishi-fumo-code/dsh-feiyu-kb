@@ -24,12 +24,13 @@ import aiohttp
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.message_components import Plain, Record
 from astrbot.api.star import Context, Star, register
 
 PLUGIN_NAME = "astrbot_plugin_feiyu_bridge"
 PLUGIN_AUTHOR = "local"
-PLUGIN_DESC = "把 QQ 私聊转发给 DSH 里的「鲸鲸」大脑"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_DESC = "把 QQ 私聊/群聊转发给 DSH 里的「鲸鲸」大脑，回文字 + feiyu 语音"
+PLUGIN_VERSION = "0.3.0"
 
 CONFIG_PATH = Path(r"D:\QQBot\AstrBot\data\feiyu_bridge.json")
 
@@ -40,6 +41,7 @@ DEFAULTS = {
     "timeoutSec": 130,
     "onlyPrivate": True,
     "ownerQq": "",          # 主人的 QQ 号；只有它算「命令」，其他人只聊天不动手
+    "voice": True,          # 文字后面再发一条 feiyu-voice 语音（2026-10-31）
     "busyText": "我在忙，等我一下喵……",
     # ── 群聊（2026-10-30）──────────────────────────────────────────────
     "groupEnabled": False,   # 群聊总开关；关着就只接私聊
@@ -71,6 +73,20 @@ def save_cfg(cfg: dict) -> None:
         )
     except OSError as exc:
         logger.warning("写转发桥配置失败：%s", exc)
+
+
+# 2026-10-31：私聊/群聊转发也带语音。复用 AstrBot 的 TTS provider，
+# 它已被改成走 feiyu-voice 的当前 profile（重糯·磁性）。
+_TTS_PROVIDER = None
+
+
+def _tts_provider():
+    global _TTS_PROVIDER
+    if _TTS_PROVIDER is None:
+        from astrbot.core.provider.sources.edge_tts_source import ProviderEdgeTTS
+
+        _TTS_PROVIDER = ProviderEdgeTTS({}, {})
+    return _TTS_PROVIDER
 
 
 LOG_PATH = Path(r"D:\QQBot\AstrBot\data\feiyu_bridge.log")
@@ -283,5 +299,14 @@ class FeiyuBridge(Star):
         })
 
         # 有回复就交给大脑，别让 AstrBot 的模型再回一遍（R4：两个人格会漂）
+        # 语音放在文字后面：先 Plain，再 Record。
+        chain = [Plain(str(out))]
+        if ok and cfg.get("voice", True):
+            try:
+                audio = await _tts_provider().get_audio(str(out))
+                if audio:
+                    chain.append(Record(file=audio, url=audio, text=str(out)))
+            except Exception as exc:
+                logger.warning("私聊/群聊语音合成失败，只发文字：%s", exc)
         event.stop_event()
-        yield event.plain_result(out)
+        yield event.chain_result(chain)

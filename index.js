@@ -354,7 +354,14 @@ export function apply(ctx, config) {
    */
   // 环境变量优先：selftest 靠它把记忆库也隔离到临时目录（否则会写进真库）
   const memRoot = () => process.env.FEIYU_MEMORY_ROOT || resolveMemoryRoot(cfg.memory?.root)
-  const memOn = () => cfg.memory?.enabled !== false
+  // ⚠️ 2026-11-04 拆分：写入**永远开**（先记下来）；读取由 read / readSessions 控制，默认关
+  const memWriteOn = () => true
+  const memReadOn = (sid) => {
+    if (cfg.memory?.read === true) return true
+    const list = Array.isArray(cfg.memory?.readSessions) ? cfg.memory.readSessions : []
+    return Boolean(sid) && list.includes(String(sid))
+  }
+  const memOn = () => memWriteOn()   // 兼容旧调用点：只表示"写入是否开"
 
   tool({
     name: 'mem_add',
@@ -428,7 +435,7 @@ export function apply(ctx, config) {
     description: '记忆库概况：多少条、最近一条、对话流水天数。',
     parameters: {},
     async execute() {
-      try { return { ok: true, ...memoryStatus(memRoot()), enabled: memOn() } }
+      try { return { ok: true, ...memoryStatus(memRoot()), write: true, read: cfg.memory?.read === true, readSessions: cfg.memory?.readSessions || [] } }
       catch (err) { return { ok: false, error: String(err?.message ?? err) } }
     },
   })
@@ -445,7 +452,7 @@ export function apply(ctx, config) {
     } catch { /* 用默认 */ }
     return 'dsh-feiyu'
   }
-  if (typeof ctx.on === 'function' && cfg.memory?.enabled !== false) {
+  if (typeof ctx.on === 'function') {   // 写入永远开（2026-11-04）
     const pend = new Map()
     // QQ 桥会在正文前贴「［通道］/［发送者］/［命令权限］」几行元信息；
     // 那是给模型看的提示，不该写进记忆流水（否则聊天记录里全是这些）。
@@ -480,7 +487,6 @@ export function apply(ctx, config) {
     try {
       const dispose = ctx.on('session/event', (session, event) => {
         try {
-          if (cfg.memory?.enabled === false) return
           const sid = String(session?.header?.id ?? session?.id ?? '')
           // 认两种：会话名对得上，或者这个会话的工作目录就是「大脑目录」
           //（B站 插件可以不改会话名，只要把 cwd 指到同一个地方，记忆照样收）
@@ -626,7 +632,7 @@ export function apply(ctx, config) {
    */
   const rematerialize = () => {
     try {
-      if (cfg.memory?.enabled === false) return
+      if (!memReadOn(brainSession())) return   // 读关着就不把记忆摘要塞进人设文件
       const personaText = chatPersona()
       if (!personaText) return
       let digestText = ''
@@ -740,8 +746,8 @@ export function apply(ctx, config) {
     // 记忆：把最近几条「值得记住的事」塞进提示，让她张口就知道上次聊到哪
     const memBlock = (() => {
       try {
-        if (cfg.memory?.enabled === false) return ''
-        // 注意：QQ/B站 通道默认**总是**引用全局记忆，不受界面开关影响（开关只对会话生效）
+        if (!memReadOn(sessionId)) return ''   // 2026-11-04：读取默认关，开了才注入
+        // QQ/B站 与界面里看到的会话走同一条规则：read 打开、或本会话在白名单里，才注入
         const n = Number(cfg.memory?.inject ?? 5) || 0
         if (n <= 0) return ''
         const recent = recentMemories(memRoot(), n)
@@ -827,11 +833,13 @@ export function apply(ctx, config) {
               const body = await readBody(req)
               const sid = String(body?.sessionId || '').trim()
               if (!sid) return sendJson(res, 400, { ok: false, error: 'sessionId 不能为空' })
-              const off = new Set(cfg.memory?.sessionOff || [])
-              if (body?.off === true) off.add(sid)
-              else if (body?.off === false) off.delete(sid)
-              cfg = saveConfig({ memory: { sessionOff: [...off] } })
-              return sendJson(res, 200, { ok: true, sessionId: sid, off: off.has(sid), sessionOff: cfg.memory.sessionOff })
+              const on = new Set(cfg.memory?.readSessions || [])   // 读取白名单（2026-11-04）
+              if (body?.read === true) on.add(sid)
+              else if (body?.read === false) on.delete(sid)
+              else if (body?.off === true) on.delete(sid)      // 兼容老前端：off=true 等于「不读」
+              else if (body?.off === false) on.add(sid)
+              cfg = saveConfig({ memory: { readSessions: [...on] } })
+              return sendJson(res, 200, { ok: true, sessionId: sid, read: cfg.memory.read === true || on.has(sid), readSessions: cfg.memory.readSessions, globalRead: cfg.memory.read })
             }
             if (req.method === 'GET' && path === '/api/feiyu-kb/config') {
               return sendJson(res, 200, { ok: true, config: cfg, root, configPath: configPath(), defaults: { tools: DEFAULT_TOOLS } })
@@ -862,6 +870,8 @@ export function apply(ctx, config) {
               if (body.memory && typeof body.memory === 'object') {
                 patch.memory = {}
                 if (typeof body.memory.enabled === 'boolean') patch.memory.enabled = body.memory.enabled
+                if (typeof body.memory.read === 'boolean') patch.memory.read = body.memory.read
+                if (Array.isArray(body.memory.readSessions)) patch.memory.readSessions = body.memory.readSessions
                 if (typeof body.memory.root === 'string') patch.memory.root = body.memory.root
                 if (body.memory.inject !== undefined) patch.memory.inject = body.memory.inject
                 if (Array.isArray(body.memory.sessionOff)) patch.memory.sessionOff = body.memory.sessionOff
