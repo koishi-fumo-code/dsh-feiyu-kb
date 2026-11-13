@@ -440,11 +440,33 @@ export function apply(ctx, config) {
 
   tool({
     name: 'mem_status',
-    description: '记忆库概况：多少条、最近一条、对话流水天数。',
-    parameters: {},
-    async execute() {
-      try { return { ok: true, ...memoryStatus(memRoot()), write: true, read: cfg.memory?.read === true, readSessions: cfg.memory?.readSessions || [] } }
-      catch (err) { return { ok: false, error: String(err?.message ?? err) } }
+    description: '记忆库概况：多少条、最近一条、对话流水天数；以及「读取」对某条会话是否生效。',
+    parameters: {
+      sessionId: { type: 'string', description: '可选：查这条会话能不能读记忆（不传则只看全局白名单）' },
+    },
+    async execute(args) {
+      try {
+        const always = cfg.memory?.alwaysReadSessions || []
+        const list = cfg.memory?.readSessions || []
+        const g = cfg.memory?.read === true
+        const sid = String(args?.sessionId || '').trim()
+        return {
+          ok: true, ...memoryStatus(memRoot()),
+          write: true,
+          read: {
+            global: g,
+            alwaysReadSessions: always,
+            readSessions: list,
+            // 不传 sessionId 时给大脑会话的判定（渠道用的就是它）
+            effectiveFor: sid || brainSession(),
+            effective: memReadOn(sid || brainSession()),
+          },
+          note: '写入永远在记；读取 = 常开白名单 / 全局开关 / 会话白名单 任一命中。'
+            + 'mem_search 不受这些开关限制（默认搜最近 14 天，可用 days 调大）。',
+        }
+      } catch (err) {
+        return { ok: false, error: String(err?.message ?? err) }
+      }
     },
   })
 

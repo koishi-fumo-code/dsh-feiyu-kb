@@ -1,0 +1,11 @@
+fix: mem_status 如实报告读取状态（避免 read:false 被误读成「不能读」）
+
+问题：mem_status 只返回全局开关 read。界面上本会话明明已经打开（写进 readSessions），
+状态里仍显示 read=false，读起来就像「这条会话不能读」。实际是三个层级混在一起：
+
+  常开白名单 alwaysReadSessions → 全局开关 read → 单会话白名单 readSessions
+
+改成结构化返回：
+  read: { global, alwaysReadSessions, readSessions, effectiveFor, effective }
+并加可选参数 sessionId（可直接查某条会话是否生效）；
+另附 note 说明 mem_search 不受这些开关限制（默认搜 14 天，可用 days 调大）。
