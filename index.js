@@ -475,14 +475,14 @@ export function apply(ctx, config) {
    * 所以「本会话记忆 读」这个开关打开了也不起作用。这里用 agent/pre-step 补上：
    *   · 每一轮的第一步注入一次（step === 0），不重复塞
    *   · 按 memReadOn(会话 id) 判定 —— 常开名单 / 全局开关 / 会话白名单
-   *   · 消息形状抄 DSH 自己的注入（role=developer + source.form=notice），出任何错都原样放行
+   *   · 消息用 user 角色 + source.form=notice（developer 角色必须与 developer/message 事件配对，单塞一条会让整轮失败 —— 2026-11-13 真实事故），出任何错都原样放行
    */
   if (typeof ctx.on === 'function') {
     ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next()
       try {
         if (!decision || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
-        if (Number(payload?.step ?? 0) > 0) return decision
+        if (Number(payload?.step ?? 0) > 1) return decision   // DSH 的 step 从 1 开始，不是 0
         const sid = String(payload?.agent?.session?.header?.id ?? '')
         if (!sid || !memReadOn(sid)) return decision
         const n = Number(cfg.memory?.inject ?? 5) || 0
@@ -493,7 +493,7 @@ export function apply(ctx, config) {
         const day = new Date().toISOString().slice(0, 10)
         const msg = {
           id: `feiyu-mem-${sid}-${day}`,
-          role: 'developer',
+          role: 'user',   // developer 角色必须与 developer/message 事件配对，这里只能用 user
           content: [{ type: 'text', text }],
           source: { kind: 'memory', form: 'notice', summary: '最近的记忆' },
         }
