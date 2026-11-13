@@ -1,14 +1,14 @@
-fix: 记忆注入用 user 角色（developer 角色必须与 developer/message 事件配对）
+feat: 记忆注入块加「账本说明」，让模型知道自己只看到了一部分
 
-事故：v0.8.0 用 role='developer' 往 pre-step 的 messages 里塞了一条消息，
-整轮直接失败：
-  session event "user/message" at seq 5757 developer/message and developer role must occur together
+使用者：一开始写记忆库是想让模型能看全部记忆，但不需要全量注入 ——
+「需要的时候你能主动去翻就行」。
 
-原因：developer 角色在会话事件流里必须伴随一条 developer/message 事件；
-只在 pre-step 拼进 messages 而不产生对应事件，事件流就自相矛盾。
+问题：只塞最近 5 条、不说总量，模型会以为记忆就这么点，于是想不起去翻更早的。
 
-改法：换成 role='user'（DSH 自己的 action-cards 注入也是 user 角色），
-其余不变（source.form='notice'，按会话判定，每轮第一步注入一次）。
+- 新增 memoryFooter(recent, total)：标题里写「（最近 5 条，账本共 17 条）」
+- 当 total > recent.length 时补一句：其余 N 条没列在这儿，需要时用 mem_search
+  按关键词翻（可搜正文与对话流水，days 可放大到全部），或用 mem_status 看概况
+- 全部列出时也说一句「这就是全部记忆」
+- 界面会话注入（agent/pre-step）与通道注入（/api/feiyu-chat）共用同一个 footer
 
-顺带删掉临时诊断日志。
 自测 58 条、preflight 21 项全过。

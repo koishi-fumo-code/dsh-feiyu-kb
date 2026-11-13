@@ -489,7 +489,10 @@ export function apply(ctx, config) {
         if (n <= 0) return decision
         const recent = recentMemories(memRoot(), n)
         if (!recent.length) return decision
-        const text = '［最近的记忆］\n' + recent.map((m) => `· ${m.date} ${m.title}${m.line ? '：' + String(m.line).slice(0, 60) : ''}`).join('\n')
+        // 账本总条数（用来告诉模型「你只看到了一部分」）
+        let total = recent.length
+        try { total = memoryStatus(memRoot()).memories ?? recent.length } catch { /* 数不出来就算了 */ }
+        const text = memoryFooter(recent, total)
         const day = new Date().toISOString().slice(0, 10)
         const msg = {
           id: `feiyu-mem-${sid}-${day}`,
@@ -504,6 +507,21 @@ export function apply(ctx, config) {
         return decision
       }
     })
+  }
+
+  /**
+   * 记忆注入块的统一收尾：列出最近几条 + 说明「账本里还有多少」。
+   * 为什么要有这行：只塞最近 5 条而不说明总量，模型会以为「记忆就这么点」，
+   * 于是想不起要主动去翻更早的东西（2026-11-13 使用者：需要的时候你能主动去翻就行）。
+   */
+  const memoryFooter = (recent, total) => {
+    const head = '［最近的记忆］（最近 ' + recent.length + ' 条'
+      + (total > recent.length ? '，账本共 ' + total + ' 条' : '') + '）'
+    const lines = recent.map((m) => `· ${m.date} ${m.title}${m.line ? '：' + String(m.line).slice(0, 60) : ''}`)
+    const tail = total > recent.length
+      ? ['', `其余 ${total - recent.length} 条没有列在这里。需要时用 mem_search 按关键词翻（可搜正文与对话流水，days 可放大到全部），或用 mem_status 看概况。`]
+      : ['', '这就是全部记忆。想看对话原文用 mem_search（默认搜最近 14 天，days 可放大）。']
+    return [head, ...lines, ...tail].join('\n')
   }
 
   /* ─────────────── 全局记忆记录器：三个通道都进同一本账 ───────────────
@@ -818,7 +836,9 @@ export function apply(ctx, config) {
         if (n <= 0) return ''
         const recent = recentMemories(memRoot(), n)
         if (!recent.length) return ''
-        return '［最近的记忆］\n' + recent.map((m) => `· ${m.date} ${m.title}${m.line ? '：' + String(m.line).slice(0, 60) : ''}`).join('\n') + '\n\n'
+        let total = recent.length
+        try { total = memoryStatus(memRoot()).memories ?? recent.length } catch { /* 数不出来就按当前条数 */ }
+        return memoryFooter(recent, total) + '\n\n'
       } catch { return '' }
     })()
     // 发送者身份：只有主人的号算「命令」，其他人只聊天、不许动手。
