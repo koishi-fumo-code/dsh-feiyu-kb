@@ -470,6 +470,42 @@ export function apply(ctx, config) {
     },
   })
 
+  /* ─────────────── 记忆注入：让界面会话也"读"到记忆（2026-11-13） ───────────────
+   * 之前只有 /api/feiyu-chat（QQ/B站 桥）会把最近记忆塞进提示；界面里的会话没有注入点，
+   * 所以「本会话记忆 读」这个开关打开了也不起作用。这里用 agent/pre-step 补上：
+   *   · 每一轮的第一步注入一次（step === 0），不重复塞
+   *   · 按 memReadOn(会话 id) 判定 —— 常开名单 / 全局开关 / 会话白名单
+   *   · 消息形状抄 DSH 自己的注入（role=developer + source.form=notice），出任何错都原样放行
+   */
+  if (typeof ctx.on === 'function') {
+    ctx.on('agent/pre-step', async (payload, next) => {
+      const decision = await next()
+      try {
+        if (!decision || decision.kind !== 'enter' || !Array.isArray(decision.messages)) return decision
+        if (Number(payload?.step ?? 0) > 0) return decision
+        const sid = String(payload?.agent?.session?.header?.id ?? '')
+        if (!sid || !memReadOn(sid)) return decision
+        const n = Number(cfg.memory?.inject ?? 5) || 0
+        if (n <= 0) return decision
+        const recent = recentMemories(memRoot(), n)
+        if (!recent.length) return decision
+        const text = '［最近的记忆］\n' + recent.map((m) => `· ${m.date} ${m.title}${m.line ? '：' + String(m.line).slice(0, 60) : ''}`).join('\n')
+        const day = new Date().toISOString().slice(0, 10)
+        const msg = {
+          id: `feiyu-mem-${sid}-${day}`,
+          role: 'developer',
+          content: [{ type: 'text', text }],
+          source: { kind: 'memory', form: 'notice', summary: '最近的记忆' },
+        }
+        log(`记忆注入：会话 ${sid.slice(0, 18)}… · ${recent.length} 条`)
+        return { ...decision, messages: [msg, ...decision.messages] }
+      } catch (e) {
+        log(`记忆注入失败（不影响对话）：${e?.message ?? e}`)
+        return decision
+      }
+    })
+  }
+
   /* ─────────────── 全局记忆记录器：三个通道都进同一本账 ───────────────
    * 不在各通道分别写，而是订阅会话事件：QQ 走 /api/feiyu-chat、B站 走生物钟投递、
    * DSH 直接聊 —— 最后都会落进同一个 dsh-feiyu 会话。记在会话上，等于全记了。

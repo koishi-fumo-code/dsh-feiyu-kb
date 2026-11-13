@@ -1,11 +1,15 @@
-fix: mem_status 如实报告读取状态（避免 read:false 被误读成「不能读」）
+feat: 界面会话也能读到记忆（agent/pre-step 注入，按会话判定）
 
-问题：mem_status 只返回全局开关 read。界面上本会话明明已经打开（写进 readSessions），
-状态里仍显示 read=false，读起来就像「这条会话不能读」。实际是三个层级混在一起：
+之前「本会话记忆 读」开关只写进 readSessions，但界面里的会话没有任何注入点 ——
+注入只发生在 /api/feiyu-chat（QQ/B站 桥）和 B站 的 persona.md，所以开关打开了也不起作用。
 
-  常开白名单 alwaysReadSessions → 全局开关 read → 单会话白名单 readSessions
+新增：
+- ctx.on('agent/pre-step')：每轮第一步注入一次「最近的记忆」，不重复塞
+- 判定走 memReadOn(agent.session.header.id) —— 常开名单 / 全局开关 / 会话白名单
+- 消息形状照 DSH 自己的注入：role=developer、content=[{type:'text'}]、
+  source={kind:'memory', form:'notice', summary:'最近的记忆'}
+- 任何异常都原样放行（return decision），不影响对话；同时写一行日志便于核对
+- 行数上限走 memory.inject（默认 5）
 
-改成结构化返回：
-  read: { global, alwaysReadSessions, readSessions, effectiveFor, effective }
-并加可选参数 sessionId（可直接查某条会话是否生效）；
-另附 note 说明 mem_search 不受这些开关限制（默认搜 14 天，可用 days 调大）。
+验证方式：新开一轮后看 plugin.log 里有没有「记忆注入：会话 … · N 条」。
+自测 58 条、preflight 21 项全过。
